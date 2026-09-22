@@ -1,0 +1,280 @@
+import { App, debounce, DropdownComponent, normalizePath, PluginSettingTab, Setting, SettingDefinitionItem, TextAreaComponent } from "obsidian";
+import JobApplicationTrackerPlugin from "../main";
+import { DEFAULT_INTERVIEW_PREP_TEMPLATE, DEFAULT_SETTINGS, DEFAULT_STATUSES } from "../constants";
+
+export class JobApplicationTrackerSettingTab extends PluginSettingTab {
+	plugin: JobApplicationTrackerPlugin;
+	private defaultStatusDropdown: DropdownComponent | null = null;
+
+	private debouncedSave = debounce(async () => {
+		await this.plugin.saveSettings();
+	}, 500);
+
+	constructor(app: App, plugin: JobApplicationTrackerPlugin) {
+		super(app, plugin);
+		this.plugin = plugin;
+	}
+
+	private updateDefaultStatusDropdown(): void {
+		if (!this.defaultStatusDropdown) return;
+		this.defaultStatusDropdown.selectEl.empty();
+		for (const st of this.plugin.settings.statuses) {
+			this.defaultStatusDropdown.addOption(st, st);
+		}
+		this.defaultStatusDropdown.setValue(this.plugin.settings.defaultStatus);
+	}
+
+	private sanitizeFolderPath(input: string, fallback: string): string {
+		const cleaned = input.trim().replace(/[\\:*?"<>|#^[\]]/g, "-");
+		const normalized = normalizePath(cleaned);
+		return normalized === "." || !normalized ? fallback : normalized;
+	}
+
+	private getTemplateDesc(): DocumentFragment {
+		const templateDesc = createFragment();
+		templateDesc.append(
+			"Template used when creating an Interview Prep note. Supported placeholders:",
+			templateDesc.createEl("br"),
+			templateDesc.createEl("code", { text: "{{company}}" }),
+			", ",
+			templateDesc.createEl("code", { text: "{{role}}" }),
+			", ",
+			templateDesc.createEl("code", { text: "{{roundName}}" }),
+			", ",
+			templateDesc.createEl("code", { text: "{{date}}" }),
+			", ",
+			templateDesc.createEl("code", { text: "{{time}}" }),
+			", ",
+			templateDesc.createEl("code", { text: "{{interviewers}}" }),
+			", ",
+			templateDesc.createEl("code", { text: "{{applicationNoteTitle}}" })
+		);
+		return templateDesc;
+	}
+
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		return [
+			{
+				type: "group",
+				heading: "Folders & Storage",
+				items: [
+					{
+						name: "Applications Folder",
+						desc: "Folder in your vault where job application notes will be created and tracked.",
+						render: (setting: Setting) => {
+							setting.addText((text) =>
+								text
+									.setPlaceholder("Job Applications")
+									.setValue(this.plugin.settings.trackerFolderPath)
+									.onChange((value) => {
+										this.plugin.settings.trackerFolderPath = this.sanitizeFolderPath(
+											value,
+											DEFAULT_SETTINGS.trackerFolderPath
+										);
+										this.debouncedSave();
+									})
+							);
+						},
+					},
+					{
+						name: "Interview Notes Folder",
+						desc: "Folder where generated interview prep and debrief notes will be stored.",
+						render: (setting: Setting) => {
+							setting.addText((text) =>
+								text
+									.setPlaceholder("Job Applications/Interviews")
+									.setValue(this.plugin.settings.interviewNotesFolderPath)
+									.onChange((value) => {
+										this.plugin.settings.interviewNotesFolderPath = this.sanitizeFolderPath(
+											value,
+											DEFAULT_SETTINGS.interviewNotesFolderPath
+										);
+										this.debouncedSave();
+									})
+							);
+						},
+					},
+					{
+						name: "Attachments Folder",
+						desc: "Folder where uploaded job description PDFs and markdown attachments are stored.",
+						render: (setting: Setting) => {
+							setting.addText((text) =>
+								text
+									.setPlaceholder("Job Applications/Attachments")
+									.setValue(this.plugin.settings.attachmentsFolderPath || "Job Applications/Attachments")
+									.onChange((value) => {
+										this.plugin.settings.attachmentsFolderPath = this.sanitizeFolderPath(
+											value,
+											DEFAULT_SETTINGS.attachmentsFolderPath
+										);
+										this.debouncedSave();
+									})
+							);
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Display & Pipeline Defaults",
+				items: [
+					{
+						name: "Default View Location",
+						desc: "Where to open the Job Application Tracker dashboard when clicking the ribbon icon or command.",
+						render: (setting: Setting) => {
+							setting.addDropdown((dropdown) => {
+								dropdown.addOption("tab", "Main Tab (Center, Recommended for Kanban)");
+								dropdown.addOption("right-sidebar", "Right Sidebar");
+								dropdown.addOption("left-sidebar", "Left Sidebar");
+								dropdown.setValue(this.plugin.settings.openViewLocation || "tab");
+								dropdown.onChange(async (value) => {
+									this.plugin.settings.openViewLocation = value as "tab" | "right-sidebar" | "left-sidebar";
+									await this.plugin.saveSettings();
+								});
+							});
+						},
+					},
+					{
+						name: "Pipeline Stages / Statuses",
+						desc: "Comma-separated list of application stages used in Kanban columns, badges, and filters.",
+						render: (setting: Setting) => {
+							let stagesTextArea: TextAreaComponent | null = null;
+							setting
+								.addTextArea((text) => {
+									stagesTextArea = text;
+									text
+										.setValue(this.plugin.settings.statuses.join(", "))
+										.onChange((value) => {
+											const cleanStatuses = value
+												.split(",")
+												.map((s) => s.trim().replace(/[\\#^[\]]/g, ""))
+												.filter((s) => s.length > 0);
+											if (cleanStatuses.length > 0) {
+												this.plugin.settings.statuses = cleanStatuses;
+												if (!cleanStatuses.includes(this.plugin.settings.defaultStatus)) {
+													this.plugin.settings.defaultStatus = cleanStatuses[0];
+												}
+												this.updateDefaultStatusDropdown();
+												this.debouncedSave();
+											}
+										});
+									text.inputEl.rows = 2;
+								})
+								.addExtraButton((btn) => {
+									btn.setIcon("reset")
+										.setTooltip("Reset to default pipeline stages")
+										.onClick(async () => {
+											this.plugin.settings.statuses = [...DEFAULT_STATUSES];
+											this.plugin.settings.defaultStatus = "Applied";
+											await this.plugin.saveSettings();
+											if (stagesTextArea) {
+												stagesTextArea.setValue(DEFAULT_STATUSES.join(", "));
+											}
+											this.updateDefaultStatusDropdown();
+										});
+								});
+						},
+					},
+					{
+						name: "Default Initial Status",
+						desc: "Default status assigned to newly created applications.",
+						render: (setting: Setting) => {
+							setting.addDropdown((dropdown) => {
+								this.defaultStatusDropdown = dropdown;
+								for (const st of this.plugin.settings.statuses) {
+									dropdown.addOption(st, st);
+								}
+								dropdown.setValue(this.plugin.settings.defaultStatus);
+								dropdown.onChange(async (value) => {
+									this.plugin.settings.defaultStatus = value;
+									await this.plugin.saveSettings();
+								});
+							});
+						},
+					},
+					{
+						name: "Application Sources",
+						desc: "Comma-separated list of sources for finding jobs (e.g. LinkedIn, Referral, Indeed).",
+						render: (setting: Setting) => {
+							setting.addTextArea((text) => {
+								text
+									.setValue(this.plugin.settings.defaultSourceOptions.join(", "))
+									.onChange((value) => {
+										const cleanSources = value
+											.split(",")
+											.map((s) => s.trim().replace(/[\\#^[\]]/g, ""))
+											.filter((s) => s.length > 0);
+										this.plugin.settings.defaultSourceOptions =
+											cleanSources.length > 0 ? cleanSources : [...DEFAULT_SETTINGS.defaultSourceOptions];
+										this.debouncedSave();
+									});
+								text.inputEl.rows = 2;
+							});
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Interview Prep Note Template",
+				items: [
+					{
+						name: "Template Content",
+						desc: this.getTemplateDesc(),
+						render: (setting: Setting) => {
+							let templateTextArea: TextAreaComponent | null = null;
+							setting
+								.addTextArea((textArea) => {
+									templateTextArea = textArea;
+									textArea
+										.setValue(this.plugin.settings.interviewPrepTemplate)
+										.onChange((value) => {
+											this.plugin.settings.interviewPrepTemplate = value;
+											this.debouncedSave();
+										});
+									textArea.inputEl.rows = 14;
+									textArea.inputEl.addClass("job-tracker-template-textarea");
+								})
+								.addExtraButton((btn) => {
+									btn.setIcon("reset")
+										.setTooltip("Reset to default template")
+										.onClick(async () => {
+											this.plugin.settings.interviewPrepTemplate = DEFAULT_INTERVIEW_PREP_TEMPLATE;
+											await this.plugin.saveSettings();
+											if (templateTextArea) {
+												templateTextArea.setValue(DEFAULT_INTERVIEW_PREP_TEMPLATE);
+											}
+										});
+								});
+						},
+					},
+				],
+			},
+		];
+	}
+
+	display(): void {
+		const { containerEl } = this;
+		containerEl.empty();
+
+		for (const def of this.getSettingDefinitions()) {
+			if ("type" in def && def.type === "group" && "items" in def && Array.isArray(def.items)) {
+				if ("heading" in def && typeof def.heading === "string") {
+					new Setting(containerEl).setName(def.heading).setHeading();
+				}
+				for (const item of def.items) {
+					if ("render" in item && typeof item.render === "function") {
+						const setting = new Setting(containerEl);
+						if ("name" in item && typeof item.name === "string") {
+							setting.setName(item.name);
+						}
+						if ("desc" in item && item.desc) {
+							setting.setDesc(item.desc);
+						}
+						(item.render as (s: Setting) => void)(setting);
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,762 @@
+import {
+	ItemView,
+	WorkspaceLeaf,
+	setIcon,
+	TFile,
+	debounce,
+	Menu,
+	normalizePath,
+} from "obsidian";
+import JobApplicationTrackerPlugin from "../main";
+import { JobApplication, JobSortField } from "../types";
+import { sanitizeUrl } from "../services/ApplicationService";
+import { VIEW_TYPE_JOB_TRACKER } from "../constants";
+import { getStageCategory, isInterviewStage, isResponseStage, isTerminalStatus, reachedInterview, reachedOffer } from "../stages";
+import { NewApplicationModal } from "../modals/NewApplicationModal";
+import { UpdateStatusModal } from "../modals/UpdateStatusModal";
+import { AddContactModal } from "../modals/AddContactModal";
+import { AddInterviewModal } from "../modals/AddInterviewModal";
+import { EditApplicationModal } from "../modals/EditApplicationModal";
+import { ManageApplicationModal } from "../modals/ManageApplicationModal";
+import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
+import { KanbanRenderer } from "./renderers/KanbanRenderer";
+import { TableRenderer } from "./renderers/TableRenderer";
+import { ListRenderer } from "./renderers/ListRenderer";
+import { MetricsRenderer } from "./renderers/MetricsRenderer";
+
+export type TrackerViewMode = "kanban" | "table" | "list" | "metrics";
+
+export interface MetricsData {
+	appHistories: { app: JobApplication; visited: string[] }[];
+	totalApps: number;
+	appliedTotal: number;
+	activeCount: number;
+	responseRate: string;
+	oaRate: string;
+	interviewRate: string;
+	offerRate: string;
+	totalContacts: number;
+	totalInterviews: number;
+	completedInterviews: number;
+	respondedCount: number;
+	oaCount: number;
+	interviewCount: number;
+	offerCount: number;
+	acceptedCount: number;
+	rejectedCount: number;
+	/** For rejected applications: the last stage reached before the rejection. */
+	rejectedAtStage: Map<string, number>;
+	sourceMap: Map<string, { total: number; oas: number; interviews: number; offers: number }>;
+	allHistoryEntries: { company: string; role: string; filePath: string; date: string; status: string; note?: string }[];
+}
+
+/**
+ * Main dashboard view for the Job Application Tracker plugin, coordinating
+ * Kanban, Table, List, and Metrics view modes with debounced search and filtering.
+ */
+export class JobTrackerView extends ItemView {
+	plugin: JobApplicationTrackerPlugin;
+
+	private currentMode: TrackerViewMode = "kanban";
+	private searchQuery = "";
+	private statusFilter = "All";
+	sortField: JobSortField = "dateApplied";
+	sortAscending = false;
+	applications: JobApplication[] = [];
+
+	private kanbanRenderer: KanbanRenderer;
+	private tableRenderer: TableRenderer;
+	private listRenderer: ListRenderer;
+	private metricsRenderer: MetricsRenderer;
+
+	/** Incremental data version for metrics computation and caching */
+	private dataVersion = 0;
+	private metricsVersion = -1;
+	private metricsCache: MetricsData | null = null;
+
+	private headerEl: HTMLElement | null = null;
+	private contentAreaEl: HTMLElement | null = null;
+	private countBadgeEl: HTMLElement | null = null;
+	private modeButtons: { mode: TrackerViewMode; btn: HTMLButtonElement }[] = [];
+	private filterRowEl: HTMLElement | null = null;
+	private statusSelectEl: HTMLSelectElement | null = null;
+	private searchInputEl: HTMLInputElement | null = null;
+	private searchClearEl: HTMLElement | null = null;
+
+	private debouncedRefresh: () => void;
+	private debouncedSearch: () => void;
+
+	constructor(leaf: WorkspaceLeaf, plugin: JobApplicationTrackerPlugin) {
+		super(leaf);
+		this.plugin = plugin;
+
+		this.kanbanRenderer = new KanbanRenderer(this);
+		this.tableRenderer = new TableRenderer(this);
+		this.listRenderer = new ListRenderer(this);
+		this.metricsRenderer = new MetricsRenderer(this);
+
+		this.debouncedRefresh = debounce(
+			() => {
+				this.loadAndRender();
+			},
+			300,
+			true
+		);
+
+		this.debouncedSearch = debounce(
+			() => {
+				this.tableRenderer.resetPagination();
+				this.listRenderer.resetPagination();
+				this.renderContentOnly();
+			},
+			200,
+			false
+		);
+	}
+
+	getViewType(): string {
+		return VIEW_TYPE_JOB_TRACKER;
+	}
+
+	getDisplayText(): string {
+		return "Job Applications";
+	}
+
+	getIcon(): string {
+		return "briefcase";
+	}
+
+	async onOpen() {
+		// Register vault & cache change listeners to auto-refresh view
+		// Only respond to changes within the application or interview folders
+		this.registerEvent(
+			this.app.vault.on("create", (file) => {
+				if (file instanceof TFile && file.extension === "md" && this.isTrackedFile(file)) this.debouncedRefresh();
+			})
+		);
+		this.registerEvent(
+			this.app.vault.on("delete", (file) => {
+				if (
+					(file instanceof TFile && file.extension === "md" && this.isTrackedFile(file)) ||
+					this.applications.some((a) => a.filePath === file.path || a.filePath.startsWith(file.path + "/"))
+				) {
+					this.debouncedRefresh();
+				}
+			})
+		);
+		this.registerEvent(
+			this.app.vault.on("rename", (file, oldPath) => {
+				const appFolder = normalizePath(this.plugin.settings.trackerFolderPath);
+				if (
+					(file instanceof TFile && file.extension === "md" && this.isTrackedFile(file)) ||
+					oldPath.startsWith(appFolder + "/") ||
+					this.applications.some((a) => a.filePath === oldPath || a.filePath.startsWith(oldPath + "/"))
+				) {
+					this.debouncedRefresh();
+				}
+			})
+		);
+		this.registerEvent(
+			this.app.metadataCache.on("changed", (file) => {
+				if (file instanceof TFile && this.isTrackedFile(file)) this.debouncedRefresh();
+			})
+		);
+
+		this.loadAndRender();
+	}
+
+	/**
+	 * Checks if a file is within the tracked application folder or has job-application frontmatter.
+	 */
+	private isTrackedFile(file: TFile): boolean {
+		return this.plugin.appService.isTrackedFile(file);
+	}
+
+	async onClose() {
+		this.contentEl.empty();
+		this.headerEl = null;
+		this.contentAreaEl = null;
+		this.countBadgeEl = null;
+		this.filterRowEl = null;
+		this.statusSelectEl = null;
+		this.searchInputEl = null;
+		this.searchClearEl = null;
+		this.modeButtons = [];
+		this.metricsCache = null;
+	}
+
+	loadAndRender() {
+		this.applications = this.plugin.appService.getAllApplications();
+		this.dataVersion++;
+		this.metricsCache = null;
+		this.tableRenderer.resetPagination();
+		this.listRenderer.resetPagination();
+		this.render();
+	}
+
+	render() {
+		const { contentEl } = this;
+		if (!this.headerEl || !this.contentAreaEl || !contentEl.contains(this.headerEl)) {
+			contentEl.empty();
+			contentEl.addClass("job-tracker-view");
+			this.headerEl = contentEl.createDiv({ cls: "job-tracker-header" });
+			this.contentAreaEl = contentEl.createDiv({ cls: "job-tracker-content-area" });
+			this.renderHeader(this.headerEl);
+		} else {
+			this.updateHeaderState();
+		}
+
+		this.renderContentOnly();
+	}
+
+	updateHeaderState() {
+		if (this.countBadgeEl) {
+			this.countBadgeEl.setText(`${this.applications.length} apps`);
+		}
+		for (const { mode, btn } of this.modeButtons) {
+			const isActive = this.currentMode === mode;
+			btn.classList.toggle("is-active", isActive);
+			btn.setAttribute("aria-selected", `${isActive}`);
+			btn.setAttribute("tabindex", isActive ? "0" : "-1");
+		}
+		if (this.filterRowEl) {
+			this.filterRowEl.toggleClass("job-tracker-is-hidden", this.currentMode === "metrics");
+		}
+		if (this.searchInputEl && this.searchInputEl.value !== this.searchQuery) {
+			this.searchInputEl.value = this.searchQuery;
+		}
+		if (this.searchClearEl) {
+			this.searchClearEl.toggleClass("job-tracker-is-hidden", !this.searchQuery);
+		}
+	}
+
+	renderHeader(container: HTMLElement) {
+		this.modeButtons = [];
+
+		// Top row: Title + Actions
+		const topRow = container.createDiv({ cls: "job-tracker-header-top" });
+		const titleContainer = topRow.createDiv({ cls: "job-tracker-title-container" });
+		const titleIcon = titleContainer.createSpan({ cls: "job-tracker-title-icon" });
+		setIcon(titleIcon, "briefcase");
+		titleContainer.createEl("h3", { text: "SWE Job Tracker", cls: "job-tracker-title" });
+		this.countBadgeEl = titleContainer.createSpan({
+			text: `${this.applications.length} apps`,
+			cls: "job-tracker-count-badge",
+		});
+
+		const headerActions = topRow.createDiv({ cls: "job-tracker-header-actions" });
+
+		// Mode switcher buttons
+		const viewSwitcher = headerActions.createDiv({
+			cls: "job-tracker-view-switcher",
+			attr: { role: "tablist", "aria-label": "View mode" },
+		});
+
+		const modes: { mode: TrackerViewMode; label: string; icon: string }[] = [
+			{ mode: "kanban", label: "Kanban View", icon: "columns-3" },
+			{ mode: "table", label: "Table View", icon: "table" },
+			{ mode: "list", label: "List View", icon: "list" },
+			{ mode: "metrics", label: "Metrics & Statistics", icon: "bar-chart-3" },
+		];
+
+		for (const { mode, label, icon } of modes) {
+			const isActive = this.currentMode === mode;
+			const btn = viewSwitcher.createEl("button", {
+				cls: `job-tracker-mode-btn ${isActive ? "is-active" : ""}`,
+				attr: {
+					"aria-label": label,
+					role: "tab",
+					"aria-selected": `${isActive}`,
+					tabindex: isActive ? "0" : "-1",
+				},
+			});
+			setIcon(btn, icon);
+			this.modeButtons.push({ mode, btn });
+			btn.onclick = () => {
+				this.currentMode = mode;
+				this.updateHeaderState();
+				this.renderContentOnly();
+			};
+		}
+
+		// Refresh button
+		const refreshBtn = headerActions.createEl("button", {
+			cls: "job-tracker-icon-btn",
+			attr: { "aria-label": "Refresh applications" },
+		});
+		setIcon(refreshBtn, "refresh-cw");
+		refreshBtn.onclick = () => this.loadAndRender();
+
+		// Add Application CTA button
+		const addBtn = headerActions.createEl("button", {
+			cls: "mod-cta job-tracker-add-btn",
+			text: "+ Add Application",
+		});
+		addBtn.onclick = () => {
+			new NewApplicationModal(this.app, this.plugin).open();
+		};
+
+		// Filter & Search bar row (only for non-metrics view)
+		this.filterRowEl = container.createDiv({ cls: "job-tracker-filter-row" });
+		this.filterRowEl.toggleClass("job-tracker-is-hidden", this.currentMode === "metrics");
+
+		// Search input
+		const searchWrapper = this.filterRowEl.createDiv({ cls: "job-tracker-search-wrapper" });
+		const searchIcon = searchWrapper.createSpan({ cls: "job-tracker-search-icon" });
+		setIcon(searchIcon, "search");
+		this.searchInputEl = searchWrapper.createEl("input", {
+			type: "text",
+			placeholder: "Search company, role, location...",
+			cls: "job-tracker-search-input",
+			value: this.searchQuery,
+			attr: { "aria-label": "Search applications" },
+		});
+		this.searchInputEl.oninput = (e) => {
+			this.searchQuery = (e.target as HTMLInputElement).value;
+			if (this.searchClearEl) {
+				this.searchClearEl.toggleClass("job-tracker-is-hidden", !this.searchQuery);
+			}
+			this.debouncedSearch();
+		};
+
+		this.searchClearEl = searchWrapper.createSpan({
+			cls: "job-tracker-search-clear",
+			attr: { "aria-label": "Clear search", role: "button", tabindex: "0" },
+		});
+		setIcon(this.searchClearEl, "x");
+		this.searchClearEl.toggleClass("job-tracker-is-hidden", !this.searchQuery);
+		this.searchClearEl.onclick = () => {
+			this.searchQuery = "";
+			if (this.searchInputEl) this.searchInputEl.value = "";
+			this.updateHeaderState();
+			this.renderContentOnly();
+		};
+		this.searchClearEl.onkeydown = (e) => {
+			if (e.key === "Enter" || e.key === " ") {
+				e.preventDefault();
+				this.searchQuery = "";
+				if (this.searchInputEl) this.searchInputEl.value = "";
+				this.updateHeaderState();
+				this.renderContentOnly();
+			}
+		};
+
+		// Status filter dropdown
+		this.statusSelectEl = this.filterRowEl.createEl("select", {
+			cls: "job-tracker-filter-select",
+			attr: { "aria-label": "Filter by status" },
+		});
+		this.statusSelectEl.createEl("option", { text: "All Statuses", value: "All" });
+		for (const [value, text] of [["@active", "Active (not closed)"], ["@interviewing", "Interviewing (any round)"]]) {
+			const opt = this.statusSelectEl.createEl("option", { text, value });
+			if (value === this.statusFilter) opt.selected = true;
+		}
+		for (const st of this.plugin.settings.statuses) {
+			const opt = this.statusSelectEl.createEl("option", { text: st, value: st });
+			if (st === this.statusFilter) opt.selected = true;
+		}
+		this.statusSelectEl.onchange = (e) => {
+			this.statusFilter = (e.target as HTMLSelectElement).value;
+			this.renderContentOnly();
+		};
+	}
+
+	renderContentOnly() {
+		const contentArea = this.contentAreaEl ?? this.contentEl.querySelector<HTMLElement>(".job-tracker-content-area");
+		if (contentArea instanceof HTMLElement) {
+			contentArea.empty();
+			const filteredApps = this.getFilteredAndSortedApps();
+			if (filteredApps.length === 0) {
+				if (this.applications.length === 0) {
+					this.renderEmptyState(contentArea);
+				} else {
+					this.renderNoSearchResults(contentArea);
+				}
+				return;
+			}
+			if (this.currentMode === "kanban") {
+				this.kanbanRenderer.render(contentArea, filteredApps);
+			} else if (this.currentMode === "table") {
+				this.tableRenderer.render(contentArea, filteredApps);
+			} else if (this.currentMode === "list") {
+				this.listRenderer.render(contentArea, filteredApps);
+			} else {
+				this.metricsRenderer.render(contentArea);
+			}
+		}
+	}
+
+	getFilteredAndSortedApps(): JobApplication[] {
+		let result = [...this.applications];
+
+		// Status Filter
+		if (this.statusFilter === "@active") {
+			result = result.filter((a) => !isTerminalStatus(a.status));
+		} else if (this.statusFilter === "@interviewing") {
+			result = result.filter((a) => isInterviewStage(a.status));
+		} else if (this.statusFilter !== "All") {
+			result = result.filter((a) => a.status === this.statusFilter);
+		}
+
+		// Search filter
+		if (this.searchQuery.trim()) {
+			const q = this.searchQuery.toLowerCase().trim();
+			result = result.filter(
+				(a) =>
+					(a.company ?? "").toLowerCase().includes(q) ||
+					(a.role ?? "").toLowerCase().includes(q) ||
+					(a.location && a.location.toLowerCase().includes(q)) ||
+					(a.source && a.source.toLowerCase().includes(q)) ||
+					(a.salary && a.salary.toLowerCase().includes(q)) ||
+					(a.contacts?.some(
+						(c) =>
+							c.name.toLowerCase().includes(q) ||
+							(c.email && c.email.toLowerCase().includes(q))
+					) ?? false)
+			);
+		}
+
+		// Sorting
+		result.sort((a, b) => {
+			if (this.sortField === "status") {
+				const statuses = this.plugin.settings.statuses;
+				const idxA = statuses.indexOf(a.status);
+				const idxB = statuses.indexOf(b.status);
+				const orderA = idxA !== -1 ? idxA : statuses.length;
+				const orderB = idxB !== -1 ? idxB : statuses.length;
+				if (orderA !== orderB) {
+					return this.sortAscending ? orderA - orderB : orderB - orderA;
+				}
+			} else if (this.sortField === "salary") {
+				const numA = this.parseSalary(a.salary);
+				const numB = this.parseSalary(b.salary);
+				if (numA !== null && numB !== null) {
+					if (numA !== numB) {
+						return this.sortAscending ? numA - numB : numB - numA;
+					}
+				} else if (numA !== null) {
+					return this.sortAscending ? -1 : 1;
+				} else if (numB !== null) {
+					return this.sortAscending ? 1 : -1;
+				}
+			}
+
+			const rawA = a[this.sortField];
+			const rawB = b[this.sortField];
+			const valA = typeof rawA === "string" ? rawA.toLowerCase() : "";
+			const valB = typeof rawB === "string" ? rawB.toLowerCase() : "";
+
+			if (valA < valB) return this.sortAscending ? -1 : 1;
+			if (valA > valB) return this.sortAscending ? 1 : -1;
+			return 0;
+		});
+
+		return result;
+	}
+
+	/**
+	 * Parses a salary string (e.g. "$150,000", "$120k - $140k", "85k", "60/hr") into a numeric value for sorting.
+	 */
+	private parseSalary(salary?: string): number | null {
+		if (!salary) return null;
+		const cleaned = salary.trim().toLowerCase();
+		if (!cleaned) return null;
+		const match = cleaned.match(/([\d,]+(?:\.\d+)?)\s*([km])?/i);
+		if (!match) return null;
+		const numStr = match[1].replace(/,/g, "");
+		let val = parseFloat(numStr);
+		if (isNaN(val)) return null;
+		if (match[2]) {
+			if (match[2].toLowerCase() === "k") val *= 1000;
+			if (match[2].toLowerCase() === "m") val *= 1000000;
+		}
+		return val;
+	}
+
+	renderEmptyState(container: HTMLElement) {
+		const emptyDiv = container.createDiv({ cls: "job-tracker-empty-state" });
+		const iconEl = emptyDiv.createDiv({ cls: "job-tracker-empty-icon" });
+		setIcon(iconEl, "briefcase");
+		emptyDiv.createEl("h4", { text: "No Job Applications Found" });
+		emptyDiv.createEl("p", {
+			text: "Get started by adding your first job application.",
+		});
+		const addBtn = emptyDiv.createEl("button", {
+			cls: "mod-cta",
+			text: "+ Add Job Application",
+		});
+		addBtn.onclick = () => {
+			new NewApplicationModal(this.app, this.plugin).open();
+		};
+	}
+
+	renderNoSearchResults(container: HTMLElement) {
+		const emptyDiv = container.createDiv({ cls: "job-tracker-empty-state" });
+		const iconEl = emptyDiv.createDiv({ cls: "job-tracker-empty-icon" });
+		setIcon(iconEl, "search");
+		emptyDiv.createEl("h4", { text: "No Matching Applications" });
+		emptyDiv.createEl("p", {
+			text: "No job applications match your current search query or filter.",
+		});
+		const clearBtn = emptyDiv.createEl("button", {
+			cls: "mod-cta",
+			text: "Clear Filters",
+		});
+		clearBtn.onclick = () => {
+			this.searchQuery = "";
+			this.statusFilter = "All";
+			this.render();
+		};
+	}
+
+	/**
+	 * Extracts the chronological sequence of statuses that the application entered/exited.
+	 * Only the latest terminal status (Accepted, Rejected, Withdrawn, Ghosted) is kept, at the
+	 * end of the chain, so each application produces exactly one outcome.
+	 */
+	getVisitedStatuses(app: JobApplication): string[] {
+		const rawVisited: string[] = [];
+
+		// 1. Extract from statusHistory
+		for (const entry of app.statusHistory || []) {
+			if (entry.status && rawVisited[rawVisited.length - 1] !== entry.status) {
+				rawVisited.push(entry.status);
+			}
+		}
+
+		// 2. Ensure current status is at the end
+		if (app.status && rawVisited[rawVisited.length - 1] !== app.status) {
+			rawVisited.push(app.status);
+		}
+
+		// 3. Every application starts at "Applied"
+		if (!rawVisited.some((st) => getStageCategory(st) === "applied")) {
+			rawVisited.unshift("Applied");
+		}
+
+		// 4. Eliminate cycles / loops
+		const visited: string[] = [];
+		for (const st of rawVisited) {
+			const existingIdx = visited.indexOf(st);
+			if (existingIdx !== -1) {
+				visited.length = existingIdx + 1;
+			} else {
+				visited.push(st);
+			}
+		}
+
+		// 5. Enforce single terminal status at the end
+		const lastTerminal = [...visited].reverse().find((st) => isTerminalStatus(st));
+		if (lastTerminal) {
+			const filtered = visited.filter((st) => !isTerminalStatus(st));
+			filtered.push(lastTerminal);
+			return filtered;
+		}
+
+		return visited;
+	}
+
+	/**
+	 * Computes and caches metrics data. Only recomputes when applications data has changed.
+	 */
+	getOrComputeMetrics(): MetricsData {
+		if (this.metricsCache && this.metricsVersion === this.dataVersion) {
+			return this.metricsCache;
+		}
+
+		const totalApps = this.applications.length;
+		const appHistories = this.applications.map((a) => ({
+			app: a,
+			visited: this.getVisitedStatuses(a),
+		}));
+		const appliedTotal = totalApps;
+		const pct = (n: number) => (appliedTotal > 0 ? ((n / appliedTotal) * 100).toFixed(1) : "0.0");
+
+		const activeApps = this.applications.filter((a) => !isTerminalStatus(a.status));
+		const respondedApps = appHistories.filter((h) => h.visited.some(isResponseStage));
+		const oaApps = appHistories.filter((h) => h.visited.some((st) => getStageCategory(st) === "oa"));
+		const interviewApps = appHistories.filter((h) => h.visited.some(reachedInterview));
+		const offerApps = appHistories.filter((h) => h.visited.some(reachedOffer));
+		const acceptedApps = appHistories.filter((h) => h.visited.some((st) => getStageCategory(st) === "accepted"));
+		const rejectedApps = appHistories.filter((h) => getStageCategory(h.app.status) === "rejected");
+
+		const rejectedAtStage = new Map<string, number>();
+		for (const h of rejectedApps) {
+			const beforeRejection = h.visited.filter((st) => !isTerminalStatus(st));
+			const stage = beforeRejection[beforeRejection.length - 1] || "Applied";
+			rejectedAtStage.set(stage, (rejectedAtStage.get(stage) || 0) + 1);
+		}
+
+		const responseRate = pct(respondedApps.length);
+		const oaRate = pct(oaApps.length);
+		const interviewRate = pct(interviewApps.length);
+		const offerRate = pct(offerApps.length);
+
+		const totalContacts = this.applications.reduce((acc, a) => acc + (a.contacts?.length || 0), 0);
+		const totalInterviews = this.applications.reduce((acc, a) => acc + (a.interviews?.length || 0), 0);
+		const completedInterviews = this.applications.reduce(
+			(acc, a) => acc + (a.interviews?.filter((i) => i.status === "Completed").length || 0),
+			0
+		);
+
+		const sourceMap = new Map<string, { total: number; oas: number; interviews: number; offers: number }>();
+		for (const h of appHistories) {
+			const src = h.app.source || "Unspecified";
+			const entry = sourceMap.get(src) || { total: 0, oas: 0, interviews: 0, offers: 0 };
+			entry.total++;
+			if (h.visited.some((st) => getStageCategory(st) === "oa")) entry.oas++;
+			if (h.visited.some(reachedInterview)) entry.interviews++;
+			if (h.visited.some(reachedOffer)) entry.offers++;
+			sourceMap.set(src, entry);
+		}
+
+		const allHistoryEntries: { company: string; role: string; filePath: string; date: string; status: string; note?: string }[] = [];
+		for (const app of this.applications) {
+			for (const h of app.statusHistory || []) {
+				allHistoryEntries.push({
+					company: app.company,
+					role: app.role,
+					filePath: app.filePath,
+					date: h.date,
+					status: h.status,
+					note: h.note,
+				});
+			}
+		}
+		allHistoryEntries.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+		this.metricsCache = {
+			appHistories,
+			totalApps,
+			appliedTotal,
+			activeCount: activeApps.length,
+			responseRate,
+			oaRate,
+			interviewRate,
+			offerRate,
+			totalContacts,
+			totalInterviews,
+			completedInterviews,
+			respondedCount: respondedApps.length,
+			oaCount: oaApps.length,
+			interviewCount: interviewApps.length,
+			offerCount: offerApps.length,
+			acceptedCount: acceptedApps.length,
+			rejectedCount: rejectedApps.length,
+			rejectedAtStage,
+			sourceMap,
+			allHistoryEntries,
+		};
+		this.metricsVersion = this.dataVersion;
+		return this.metricsCache;
+	}
+
+	showCardMenu(e: MouseEvent | KeyboardEvent, app: JobApplication) {
+		const menu = new Menu();
+
+		menu.addItem((item) =>
+			item
+				.setTitle("Open Note")
+				.setIcon("file-text")
+				.onClick(() => this.openNote(app.filePath))
+		);
+
+		menu.addItem((item) =>
+			item
+				.setTitle("Manage Contacts & Interviews")
+				.setIcon("users")
+				.onClick(() => new ManageApplicationModal(this.app, this.plugin, app).open())
+		);
+
+		menu.addItem((item) =>
+			item
+				.setTitle("Edit Details & Attachment")
+				.setIcon("edit")
+				.onClick(() => new EditApplicationModal(this.app, this.plugin, app).open())
+		);
+
+		menu.addItem((item) =>
+			item
+				.setTitle("Update Status")
+				.setIcon("arrow-right-circle")
+				.onClick(() => new UpdateStatusModal(this.app, this.plugin, app).open())
+		);
+
+		menu.addItem((item) =>
+			item
+				.setTitle("Add Interview")
+				.setIcon("calendar-plus")
+				.onClick(() => new AddInterviewModal(this.app, this.plugin, app).open())
+		);
+
+		menu.addItem((item) =>
+			item
+				.setTitle("Add Contact")
+				.setIcon("user-plus")
+				.onClick(() => new AddContactModal(this.app, this.plugin, app).open())
+		);
+
+		if (app.jobDescriptionFile) {
+			const isPdf = app.jobDescriptionFile.toLowerCase().endsWith(".pdf");
+			menu.addItem((item) =>
+				item
+					.setTitle(isPdf ? "Open Attached PDF" : "Open Attached JD")
+					.setIcon(isPdf ? "file-text" : "file")
+					.onClick(() => this.openNote(app.jobDescriptionFile!))
+			);
+		}
+
+		if (app.jobUrl) {
+			const safeUrl = sanitizeUrl(app.jobUrl);
+			if (safeUrl) {
+				menu.addItem((item) =>
+					item
+						.setTitle("Open Job Posting URL")
+						.setIcon("external-link")
+						.onClick(() => window.open(safeUrl, "_blank"))
+				);
+			}
+		}
+
+		menu.addSeparator();
+
+		menu.addItem((item) =>
+			item
+				.setTitle("Delete Application")
+				.setIcon("trash-2")
+				.setWarning(true)
+				.onClick(() => {
+					new ConfirmDeleteModal(
+						this.app,
+						`Delete ${app.company}?`,
+						`Are you sure you want to delete "${app.company} - ${app.role}"? This will move the application note to trash.`,
+						"Delete Application",
+						async () => {
+							const file = this.plugin.appService.resolveFile(app.filePath);
+							if (file instanceof TFile) {
+								await this.plugin.appService.deleteApplication(file);
+							}
+						}
+					).open();
+				})
+		);
+
+		if (e instanceof MouseEvent && (e.clientX !== 0 || e.clientY !== 0)) {
+			menu.showAtMouseEvent(e);
+		} else {
+			const target = (e.target as HTMLElement) || (e.currentTarget as HTMLElement);
+			const rect = target?.getBoundingClientRect?.();
+			if (rect) {
+				menu.showAtPosition({ x: Math.round(rect.left), y: Math.round(rect.bottom + 4) });
+			}
+		}
+	}
+
+	async openNote(filePath: string) {
+		const file = this.plugin.appService.resolveFile(filePath);
+		if (file instanceof TFile) {
+			const targetLeaf = this.app.workspace.getLeaf("tab");
+			await targetLeaf.openFile(file);
+		}
+	}
+}
