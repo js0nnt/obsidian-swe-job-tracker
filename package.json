@@ -1,6 +1,6 @@
 {
   "name": "obsidian-swe-job-tracker",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Track software engineering applications through OA, recruiter screen, and interview rounds with Kanban, Table, List, and Sankey analytics.",
   "main": "main.js",
   "scripts": {

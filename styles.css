@@ -1201,3 +1201,7 @@
 		display: none;
 	}
 }
+
+.job-tracker-oa-time-input {
+	width: 8.5em;
+}

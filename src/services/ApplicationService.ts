@@ -1,5 +1,6 @@
 import { App, Notice, TFile, TFolder, normalizePath, stringifyYaml } from "obsidian";
 import { Contact, EmploymentType, InterviewRound, InterviewRoundType, JobApplication, JobApplicationFrontMatter, JobStatus, StatusHistoryEntry, WorkplaceType, isFinalStatus } from "../types";
+import { normalizeTime } from "../oaDeadline";
 import { LEGACY_STATUS_ALIASES, getAutoAdvanceStatus, getStageCategory, normalizeLegacyStatus } from "../stages";
 import JobApplicationTrackerPlugin from "../main";
 
@@ -94,6 +95,7 @@ export class ApplicationService {
 		if (fields.source !== undefined) fm.source = fields.source;
 		if (fields.followUpDate !== undefined) fm.followUpDate = fields.followUpDate;
 		if (fields.oaDeadline !== undefined) fm.oaDeadline = fields.oaDeadline;
+		if (fields.oaDeadlineTime !== undefined) fm.oaDeadlineTime = fields.oaDeadlineTime;
 		if (fields.dateApplied !== undefined) fm.dateApplied = fields.dateApplied;
 		if (fields.jobDescriptionFile !== undefined) fm.jobDescriptionFile = fields.jobDescriptionFile;
 		if (fields.contacts !== undefined) fm.contacts = fields.contacts;
@@ -582,6 +584,7 @@ export class ApplicationService {
 			source: typeof rawFrontmatter.source === "string" ? rawFrontmatter.source : "",
 			followUpDate: typeof rawFrontmatter.followUpDate === "string" ? rawFrontmatter.followUpDate : undefined,
 			oaDeadline: typeof rawFrontmatter.oaDeadline === "string" && rawFrontmatter.oaDeadline ? rawFrontmatter.oaDeadline : undefined,
+			oaDeadlineTime: normalizeTime(rawFrontmatter.oaDeadlineTime) || undefined,
 			jobDescriptionFile: typeof rawFrontmatter.jobDescriptionFile === "string" ? rawFrontmatter.jobDescriptionFile : "",
 			contacts,
 			interviews,
@@ -635,9 +638,14 @@ export class ApplicationService {
 
 	/**
 	 * Updates the status of an application note, appending to statusHistory and activity log.
-	 * `oaDeadline` (YYYY-MM-DD) is stored alongside the status when moving into an OA stage.
+	 * `oaDeadline` (YYYY-MM-DD, optional HH:mm time) is stored alongside the status when moving into an OA stage.
 	 */
-	async updateStatus(file: TFile, newStatus: JobStatus, note?: string, oaDeadline?: string): Promise<void> {
+	async updateStatus(
+		file: TFile,
+		newStatus: JobStatus,
+		note?: string,
+		oaDeadline?: { date: string; time?: string }
+	): Promise<void> {
 		return await this.runWithFileLock(file, async () => {
 			try {
 				const today = this.getTodayDateString();
@@ -646,7 +654,10 @@ export class ApplicationService {
 					const previousStatus = fm.status;
 					fm.status = newStatus;
 					fm.lastUpdated = today;
-					if (oaDeadline) fm.oaDeadline = oaDeadline;
+					if (oaDeadline) {
+						fm.oaDeadline = oaDeadline.date;
+						fm.oaDeadlineTime = oaDeadline.time || "";
+					}
 
 					if (!Array.isArray(fm.statusHistory)) {
 						fm.statusHistory = [];
@@ -977,7 +988,10 @@ export class ApplicationService {
 					if (nextStatus) {
 						fm.status = nextStatus;
 						// The OA round's date doubles as the assessment deadline
-						if (getStageCategory(nextStatus) === "oa" && interview.date) fm.oaDeadline = interview.date;
+						if (getStageCategory(nextStatus) === "oa" && interview.date) {
+							fm.oaDeadline = interview.date;
+							fm.oaDeadlineTime = normalizeTime(interview.time);
+						}
 						if (!Array.isArray(fm.statusHistory)) fm.statusHistory = [];
 						fm.statusHistory.push({
 							status: nextStatus,

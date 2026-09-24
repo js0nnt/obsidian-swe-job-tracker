@@ -347,7 +347,7 @@ export class KanbanRenderer {
 			info.createSpan({ text: app.role, cls: "job-tracker-oa-tracker-role" });
 
 			row.createSpan({
-				text: app.oaDeadline ? formatLongDate(app.oaDeadline) : "No deadline",
+				text: app.oaDeadline ? formatLongDate(app.oaDeadline, app.oaDeadlineTime) : "No deadline",
 				cls: "job-tracker-oa-tracker-date",
 			});
 
@@ -372,15 +372,15 @@ export class KanbanRenderer {
 	/** Countdown badge for an OA application; clicking it edits the deadline. */
 	private renderOADeadlineBadge(container: HTMLElement, app: JobApplication) {
 		const { label, urgency } = app.oaDeadline
-			? describeDeadline(app.oaDeadline)
+			? describeDeadline(app.oaDeadline, app.oaDeadlineTime)
 			: { label: "Set OA deadline", urgency: "none" };
 		const badge = container.createSpan({
 			cls: `job-tracker-badge job-tracker-badge-oa-deadline is-${urgency}`,
 			attr: {
 				role: "button",
 				tabindex: "0",
-				"aria-label": app.oaDeadline ? `OA due ${formatLongDate(app.oaDeadline)}. Click to change.` : "Set OA deadline",
-				title: app.oaDeadline ? `OA due ${formatLongDate(app.oaDeadline)}` : "",
+				"aria-label": app.oaDeadline ? `OA due ${formatLongDate(app.oaDeadline, app.oaDeadlineTime)}. Click to change.` : "Set OA deadline",
+				title: app.oaDeadline ? `OA due ${formatLongDate(app.oaDeadline, app.oaDeadlineTime)}` : "",
 			},
 		});
 		const icon = badge.createSpan({ cls: "job-tracker-badge-icon" });

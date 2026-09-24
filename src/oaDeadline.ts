@@ -30,15 +30,60 @@ export function daysUntil(date: string): number | null {
 	return Math.round((d.getTime() - today.getTime()) / DAY_MS);
 }
 
-/** "Mon, Sep 28, 2026" */
-export function formatLongDate(date: string): string {
-	const d = parseLocalDate(date);
-	if (!d) return date;
-	return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+/**
+ * Normalizes a time to "HH:mm". Accepts "14:30", "2:30 PM", "2pm EST", and the minute count
+ * YAML 1.1 parsers produce for an unquoted 14:30 (870). Returns "" when it can't be read.
+ */
+export function normalizeTime(value: unknown): string {
+	if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < 24 * 60) {
+		return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+	}
+	if (typeof value !== "string") return "";
+	const m = /^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?/i.exec(value);
+	if (!m || (!m[2] && !m[3])) return "";
+	let hours = parseInt(m[1], 10);
+	const minutes = m[2] ? parseInt(m[2], 10) : 0;
+	const meridiem = m[3]?.toLowerCase().charAt(0);
+	if (meridiem) {
+		if (hours < 1 || hours > 12) return "";
+		if (meridiem === "p" && hours !== 12) hours += 12;
+		if (meridiem === "a" && hours === 12) hours = 0;
+	}
+	if (hours > 23 || minutes > 59) return "";
+	return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
-/** Short countdown label shown on OA cards. */
-export function describeDeadline(date: string): { label: string; urgency: "overdue" | "urgent" | "soon" | "later" } {
+/** "14:30" → "2:30 PM" in the user's locale. */
+export function formatTime(time: string): string {
+	const t = normalizeTime(time);
+	if (!t) return time;
+	const [h, m] = t.split(":").map((n) => parseInt(n, 10));
+	return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+/** "Mon, Sep 28, 2026", or "Mon, Sep 28, 2026 at 2:30 PM" when a time is given. */
+export function formatLongDate(date: string, time?: string): string {
+	const d = parseLocalDate(date);
+	if (!d) return date;
+	const day = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+	return time && normalizeTime(time) ? `${day} at ${formatTime(time)}` : day;
+}
+
+/**
+ * Short countdown label shown on OA cards. With a due time, the last day counts down in hours
+ * and the deadline turns overdue the moment it passes; without one, it's due at the end of the day.
+ */
+export function describeDeadline(date: string, time?: string): { label: string; urgency: "overdue" | "urgent" | "soon" | "later" } {
+	const due = parseLocalDate(date);
+	const t = normalizeTime(time);
+	if (due && t) {
+		const [h, m] = t.split(":").map((n) => parseInt(n, 10));
+		due.setHours(h, m);
+		const hoursLeft = (due.getTime() - Date.now()) / (60 * 60 * 1000);
+		if (hoursLeft < 0 && hoursLeft > -24) return { label: `Overdue ${Math.max(1, Math.round(-hoursLeft))}h`, urgency: "overdue" };
+		if (hoursLeft >= 0 && hoursLeft < 1) return { label: `Due in ${Math.max(1, Math.round(hoursLeft * 60))}m`, urgency: "urgent" };
+		if (hoursLeft >= 1 && hoursLeft < 24) return { label: `Due in ${Math.round(hoursLeft)}h`, urgency: "urgent" };
+	}
 	const days = daysUntil(date);
 	if (days === null) return { label: date, urgency: "later" };
 	if (days < 0) return { label: `Overdue ${-days}d`, urgency: "overdue" };
@@ -53,9 +98,11 @@ export function isEnteringOA(app: JobApplication | undefined, newStatus: string)
 	return !app || getStageCategory(app.status) !== "oa";
 }
 
-/** Closest deadline first; applications without a deadline sink to the bottom. */
+/** Closest deadline first (untimed deadlines count as end of day); no deadline sinks to the bottom. */
 export function compareByOADeadline(a: JobApplication, b: JobApplication): number {
-	if (a.oaDeadline && b.oaDeadline) return a.oaDeadline.localeCompare(b.oaDeadline);
+	if (a.oaDeadline && b.oaDeadline) {
+		return a.oaDeadline.localeCompare(b.oaDeadline) || (a.oaDeadlineTime || "24:00").localeCompare(b.oaDeadlineTime || "24:00");
+	}
 	if (a.oaDeadline) return -1;
 	if (b.oaDeadline) return 1;
 	return 0;

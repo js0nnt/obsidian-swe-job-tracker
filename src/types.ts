@@ -77,6 +77,7 @@ export interface JobApplication {
 	source?: string; // e.g. "LinkedIn", "Referral", "Indeed", "Company Site"
 	followUpDate?: string; // YYYY-MM-DD
 	oaDeadline?: string; // YYYY-MM-DD, set when the application enters an OA stage
+	oaDeadlineTime?: string; // HH:mm, optional
 	contacts: Contact[];
 	interviews: InterviewRound[];
 	statusHistory: StatusHistoryEntry[];
@@ -112,6 +113,7 @@ export interface JobApplicationFrontMatter {
 	source?: string;
 	followUpDate?: string;
 	oaDeadline?: string;
+	oaDeadlineTime?: string;
 	jobDescriptionFile?: string;
 	tags?: string[];
 	contacts?: Contact[];
