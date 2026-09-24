@@ -1105,3 +1105,99 @@
 .job-tracker-is-hidden {
 	display: none;
 }
+
+/* OA deadline countdown */
+.job-tracker-badge.job-tracker-badge-oa-deadline {
+	--oa-color: var(--text-muted);
+	cursor: pointer;
+	color: var(--oa-color);
+	background-color: color-mix(in srgb, var(--oa-color) 12%, transparent);
+	border: 1px solid color-mix(in srgb, var(--oa-color) 25%, transparent);
+}
+.job-tracker-badge.job-tracker-badge-oa-deadline:hover {
+	background-color: color-mix(in srgb, var(--oa-color) 22%, transparent);
+}
+.job-tracker-badge-oa-deadline.is-later { --oa-color: var(--text-accent); }
+.job-tracker-badge-oa-deadline.is-soon { --oa-color: var(--text-warning, #dd6b20); }
+.job-tracker-badge-oa-deadline.is-urgent,
+.job-tracker-badge-oa-deadline.is-overdue { --oa-color: var(--text-error, #e53e3e); font-weight: 600; }
+.job-tracker-badge-oa-deadline.is-none { border-style: dashed; }
+
+.job-tracker-oa-deadline-preview {
+	margin: 8px 0 4px;
+	padding: 8px 12px;
+	border-radius: 6px;
+	font-weight: 600;
+	background-color: var(--background-secondary);
+	color: var(--text-accent);
+}
+.job-tracker-oa-deadline-preview.is-invalid { color: var(--text-error, #e53e3e); }
+
+/* OA deadline tracker below the Kanban board */
+.job-tracker-oa-tracker {
+	margin-top: 16px;
+	padding: 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background-color: var(--background-secondary);
+}
+.job-tracker-oa-tracker-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+.job-tracker-oa-tracker-header h4 {
+	margin: 0;
+	font-size: 1em;
+}
+.job-tracker-oa-tracker-icon {
+	display: inline-flex;
+	color: var(--text-accent);
+}
+.job-tracker-oa-tracker-empty {
+	color: var(--text-muted);
+	font-size: 0.9em;
+}
+.job-tracker-oa-tracker-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.job-tracker-oa-tracker-row {
+	display: grid;
+	grid-template-columns: 8.5em minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 10px;
+	border-radius: 6px;
+	background-color: var(--background-primary);
+}
+.job-tracker-oa-tracker-row .job-tracker-badge-oa-deadline {
+	justify-self: start;
+}
+.job-tracker-oa-tracker-info {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+.job-tracker-oa-tracker-role {
+	color: var(--text-muted);
+	font-size: 0.85em;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.job-tracker-oa-tracker-date {
+	color: var(--text-muted);
+	font-size: 0.85em;
+	white-space: nowrap;
+}
+@container (max-width: 500px) {
+	.job-tracker-oa-tracker-row {
+		grid-template-columns: auto minmax(0, 1fr) auto;
+	}
+	.job-tracker-oa-tracker-date {
+		display: none;
+	}
+}

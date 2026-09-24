@@ -1,7 +1,10 @@
 import { setIcon, TFile } from "obsidian";
 import { JobApplication } from "../../types";
 import { getStatusClassName } from "../../constants";
+import { getStageCategory } from "../../stages";
+import { compareByOADeadline, describeDeadline, formatLongDate } from "../../oaDeadline";
 import { NewApplicationModal } from "../../modals/NewApplicationModal";
+import { moveApplicationToStatus, OADeadlineModal } from "../../modals/OADeadlineModal";
 import { UpdateStatusModal } from "../../modals/UpdateStatusModal";
 import { JobTrackerView } from "../JobTrackerView";
 
@@ -27,6 +30,8 @@ export class KanbanRenderer {
 
 		for (const status of statuses) {
 			const colApps = apps.filter((a) => a.status === status);
+			// OA columns list the most urgent assessment first
+			if (getStageCategory(status) === "oa") colApps.sort(compareByOADeadline);
 
 			const column = board.createDiv({
 				cls: `job-tracker-kanban-column ${getStatusClassName(status)}`,
@@ -62,7 +67,11 @@ export class KanbanRenderer {
 					}
 					const file = this.view.plugin.appService.resolveFile(filePath);
 					if (file instanceof TFile) {
-						await this.view.plugin.appService.updateStatus(file, status);
+						if (app) {
+							await moveApplicationToStatus(this.view.app, this.view.plugin, app, file, status);
+						} else {
+							await this.view.plugin.appService.updateStatus(file, status);
+						}
 					}
 				}
 			};
@@ -95,6 +104,8 @@ export class KanbanRenderer {
 				}
 			}
 		}
+
+		this.renderOADeadlineTracker(container, apps);
 
 		if (this.focusedCardPath) {
 			const targetCard = board.querySelector<HTMLElement>(`[data-file-path="${CSS.escape(this.focusedCardPath)}"]`);
@@ -130,7 +141,7 @@ export class KanbanRenderer {
 					const file = this.view.plugin.appService.resolveFile(app.filePath);
 					if (file instanceof TFile) {
 						this.focusedCardPath = app.filePath;
-						await this.view.plugin.appService.updateStatus(file, nextStatus);
+						await moveApplicationToStatus(this.view.app, this.view.plugin, app, file, nextStatus);
 					}
 				}
 			}
@@ -212,6 +223,9 @@ export class KanbanRenderer {
 
 		// Tags & Badges
 		const badgesRow = card.createDiv({ cls: "job-tracker-card-badges" });
+		if (getStageCategory(app.status) === "oa") {
+			this.renderOADeadlineBadge(badgesRow, app);
+		}
 		if (app.location) {
 			const locBadge = badgesRow.createSpan({ cls: "job-tracker-badge" });
 			const locIcon = locBadge.createSpan({ cls: "job-tracker-badge-icon" });
@@ -283,5 +297,107 @@ export class KanbanRenderer {
 			cls: "job-tracker-meta-item job-tracker-date-meta",
 			text: app.dateApplied || app.lastUpdated || "",
 		});
+	}
+
+	/**
+	 * List below the board of every application currently in an OA stage, closest deadline first.
+	 */
+	private renderOADeadlineTracker(container: HTMLElement, apps: JobApplication[]) {
+		const oaApps = apps.filter((a) => getStageCategory(a.status) === "oa").sort(compareByOADeadline);
+
+		const tracker = container.createDiv({
+			cls: "job-tracker-oa-tracker",
+			attr: { role: "region", "aria-label": `OA deadlines, ${oaApps.length} assessments` },
+		});
+		const header = tracker.createDiv({ cls: "job-tracker-oa-tracker-header" });
+		const headerIcon = header.createSpan({ cls: "job-tracker-oa-tracker-icon" });
+		setIcon(headerIcon, "timer");
+		header.createEl("h4", { text: "OA Deadlines" });
+		header.createSpan({ text: `${oaApps.length}`, cls: "job-tracker-col-count" });
+
+		if (oaApps.length === 0) {
+			tracker.createDiv({
+				cls: "job-tracker-oa-tracker-empty",
+				text: "No online assessments pending. Drag an application into OA to track its deadline.",
+			});
+			return;
+		}
+
+		const list = tracker.createDiv({ cls: "job-tracker-oa-tracker-list" });
+		for (const app of oaApps) {
+			const row = list.createDiv({ cls: "job-tracker-oa-tracker-row" });
+			this.renderOADeadlineBadge(row, app);
+
+			const info = row.createDiv({ cls: "job-tracker-oa-tracker-info" });
+			const companyLink = info.createEl("a", {
+				text: app.company,
+				cls: "job-tracker-card-company",
+				attr: { tabindex: "0", role: "link" },
+			});
+			companyLink.onclick = (e) => {
+				e.preventDefault();
+				void this.view.openNote(app.filePath);
+			};
+			companyLink.onkeydown = (e) => {
+				if (e.key === "Enter") {
+					e.preventDefault();
+					void this.view.openNote(app.filePath);
+				}
+			};
+			info.createSpan({ text: app.role, cls: "job-tracker-oa-tracker-role" });
+
+			row.createSpan({
+				text: app.oaDeadline ? formatLongDate(app.oaDeadline) : "No deadline",
+				cls: "job-tracker-oa-tracker-date",
+			});
+
+			const menuBtn = row.createSpan({
+				cls: "job-tracker-card-menu-btn",
+				attr: { role: "button", tabindex: "0", "aria-label": "Application actions" },
+			});
+			setIcon(menuBtn, "more-vertical");
+			menuBtn.onclick = (e) => {
+				e.stopPropagation();
+				this.view.showCardMenu(e, app);
+			};
+			menuBtn.onkeydown = (e) => {
+				if (e.key === "Enter" || e.key === " ") {
+					e.preventDefault();
+					this.view.showCardMenu(e, app);
+				}
+			};
+		}
+	}
+
+	/** Countdown badge for an OA application; clicking it edits the deadline. */
+	private renderOADeadlineBadge(container: HTMLElement, app: JobApplication) {
+		const { label, urgency } = app.oaDeadline
+			? describeDeadline(app.oaDeadline)
+			: { label: "Set OA deadline", urgency: "none" };
+		const badge = container.createSpan({
+			cls: `job-tracker-badge job-tracker-badge-oa-deadline is-${urgency}`,
+			attr: {
+				role: "button",
+				tabindex: "0",
+				"aria-label": app.oaDeadline ? `OA due ${formatLongDate(app.oaDeadline)}. Click to change.` : "Set OA deadline",
+				title: app.oaDeadline ? `OA due ${formatLongDate(app.oaDeadline)}` : "",
+			},
+		});
+		const icon = badge.createSpan({ cls: "job-tracker-badge-icon" });
+		setIcon(icon, urgency === "overdue" ? "alert-triangle" : "timer");
+		badge.createSpan({ text: label });
+
+		const edit = () => new OADeadlineModal(this.view.app, this.view.plugin, app).open();
+		badge.onclick = (e) => {
+			e.stopPropagation();
+			edit();
+		};
+		badge.onkeydown = (e) => {
+			if (e.key === "Enter" || e.key === " ") {
+				e.preventDefault();
+				e.stopPropagation();
+				edit();
+			}
+		};
 	}
 }

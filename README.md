@@ -12,6 +12,7 @@ Applied → OA → Recruiter Screen → Round 1 → Round 2 → Round 3 → Fina
 - **SWE pipeline statuses** instead of Wishlist / Screening / Interviewing. You can still edit the list in settings. Any status containing "Round", "Final", "Superday", "Onsite" and so on is treated as an interview stage, so custom rounds work in analytics too.
 - **Interview types** built for tech: Online Assessment (OA), Take-Home, Recruiter Screen, Technical Phone Screen, Coding / DSA, System Design, Behavioral, Hiring Manager, Final Round / Superday, Team Match.
 - **Auto-advance:** scheduling an OA moves the application to `OA`. Each technical round moves it to the next `Round N`, and a Superday moves it to `Final Round`. It never moves an application backwards, and it never changes an application that has an offer or is closed.
+- **OA deadlines:** moving an application into `OA` asks when the assessment is due, either as a date or as "expires N days after the email". An **OA Deadlines** list below the Kanban board shows pending assessments with the closest deadline first. The deadline is stored as `oaDeadline` in frontmatter.
 - **Analytics:** OA rate, interview rate, and a **"Where Rejections Happen"** breakdown showing the last stage you reached before each rejection. The source table has an OA column.
 - **Filters:** "Active (not closed)" and "Interviewing (any round)".
 - **Prep note template** for coding interviews: platform and format, a DSA pattern checklist, a project deep-dive section, STAR stories, and a debrief (problems asked, complexity).

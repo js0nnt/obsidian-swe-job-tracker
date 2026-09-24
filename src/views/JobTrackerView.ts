@@ -19,6 +19,7 @@ import { AddInterviewModal } from "../modals/AddInterviewModal";
 import { EditApplicationModal } from "../modals/EditApplicationModal";
 import { ManageApplicationModal } from "../modals/ManageApplicationModal";
 import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
+import { OADeadlineModal } from "../modals/OADeadlineModal";
 import { KanbanRenderer } from "./renderers/KanbanRenderer";
 import { TableRenderer } from "./renderers/TableRenderer";
 import { ListRenderer } from "./renderers/ListRenderer";
@@ -681,6 +682,15 @@ export class JobTrackerView extends ItemView {
 				.setIcon("arrow-right-circle")
 				.onClick(() => new UpdateStatusModal(this.app, this.plugin, app).open())
 		);
+
+		if (getStageCategory(app.status) === "oa") {
+			menu.addItem((item) =>
+				item
+					.setTitle(app.oaDeadline ? "Change OA Deadline" : "Set OA Deadline")
+					.setIcon("timer")
+					.onClick(() => new OADeadlineModal(this.app, this.plugin, app).open())
+			);
+		}
 
 		menu.addItem((item) =>
 			item

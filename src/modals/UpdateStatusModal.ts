@@ -2,6 +2,7 @@ import { App, ButtonComponent, FuzzySuggestModal, Setting } from "obsidian";
 import JobApplicationTrackerPlugin from "../main";
 import { JobApplication, JobStatus } from "../types";
 import { BaseApplicationModal } from "./BaseApplicationModal";
+import { moveApplicationToStatus } from "./OADeadlineModal";
 
 /**
  * Fuzzy search modal allowing the user to select an active job application.
@@ -117,8 +118,9 @@ export class UpdateStatusModal extends BaseApplicationModal {
 				return;
 			}
 
-			await this.plugin.appService.updateStatus(file, this.newStatus, this.note.trim());
+			const application = this.application;
 			this.close();
+			await moveApplicationToStatus(this.app, this.plugin, application, file, this.newStatus, this.note.trim() || undefined);
 		} catch (err) {
 			btn?.setDisabled(false);
 			this.handleModalError("Update status", err);
