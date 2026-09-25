@@ -20,6 +20,7 @@ import { EditApplicationModal } from "../modals/EditApplicationModal";
 import { ManageApplicationModal } from "../modals/ManageApplicationModal";
 import { ConfirmDeleteModal } from "../modals/ConfirmDeleteModal";
 import { OADeadlineModal } from "../modals/OADeadlineModal";
+import { MoveToBinModal } from "../modals/MoveToBinModal";
 import { KanbanRenderer } from "./renderers/KanbanRenderer";
 import { TableRenderer } from "./renderers/TableRenderer";
 import { ListRenderer } from "./renderers/ListRenderer";
@@ -678,7 +679,14 @@ export class JobTrackerView extends ItemView {
 
 		menu.addItem((item) =>
 			item
-				.setTitle("Update Status")
+				.setTitle("Move to Bin...")
+				.setIcon("move-right")
+				.onClick(() => new MoveToBinModal(this.app, this.plugin, app).open())
+		);
+
+		menu.addItem((item) =>
+			item
+				.setTitle("Update Status & Add Note...")
 				.setIcon("arrow-right-circle")
 				.onClick(() => new UpdateStatusModal(this.app, this.plugin, app).open())
 		);
