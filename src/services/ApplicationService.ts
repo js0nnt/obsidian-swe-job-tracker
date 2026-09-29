@@ -1,6 +1,7 @@
 import { App, Notice, TFile, TFolder, normalizePath, stringifyYaml } from "obsidian";
 import { Contact, EmploymentType, InterviewRound, InterviewRoundType, JobApplication, JobApplicationFrontMatter, JobStatus, StatusHistoryEntry, WorkplaceType, isFinalStatus } from "../types";
 import { normalizeTime } from "../oaDeadline";
+import { shouldAutoGhost } from "../autoGhost";
 import { LEGACY_STATUS_ALIASES, getAutoAdvanceStatus, getStageCategory, normalizeLegacyStatus } from "../stages";
 import JobApplicationTrackerPlugin from "../main";
 
@@ -640,17 +641,36 @@ export class ApplicationService {
 	 * Updates the status of an application note, appending to statusHistory and activity log.
 	 * `oaDeadline` (YYYY-MM-DD, optional HH:mm time) is stored alongside the status when moving into an OA stage.
 	 */
+	async autoGhostApplication(application: JobApplication): Promise<void> {
+		if (!this.plugin.settings.autoGhostEnabled || !shouldAutoGhost(application, this.getTodayDateString())) return;
+		const file = this.resolveFile(application.filePath);
+		if (!file) return;
+		const ghostedStatus = this.plugin.settings.statuses.find(status => getStageCategory(status) === "ghosted") || "Ghosted";
+		if (!this.plugin.settings.statuses.includes(ghostedStatus)) {
+			this.plugin.settings.statuses.push(ghostedStatus);
+			await this.plugin.saveSettings(false);
+		}
+		await this.updateStatus(file, ghostedStatus, "Automatically marked Ghosted after 21 days without a recorded response.", undefined, true);
+	}
+
 	async updateStatus(
 		file: TFile,
 		newStatus: JobStatus,
 		note?: string,
-		oaDeadline?: { date: string; time?: string }
+		oaDeadline?: { date: string; time?: string },
+		autoGhost = false
 	): Promise<void> {
 		return await this.runWithFileLock(file, async () => {
 			try {
 				const today = this.getTodayDateString();
+				let skipped = false;
 
 				await this.app.fileManager.processFrontMatter(file, (fm: JobApplicationFrontMatter) => {
+					// Recheck the live note under the file lock, so a recent response wins over a stale scan.
+					if (autoGhost && (!this.plugin.settings.autoGhostEnabled || !shouldAutoGhost(fm, today))) {
+						skipped = true;
+						return;
+					}
 					const previousStatus = fm.status;
 					fm.status = newStatus;
 					fm.lastUpdated = today;
@@ -667,7 +687,7 @@ export class ApplicationService {
 					// (e.g. a card dropped on "Offer" on its way to "Rejected"), not a real stage.
 					const now = Date.now();
 					const lastChangeAt = this.lastStatusChangeAt.get(file.path) ?? 0;
-					this.lastStatusChangeAt.set(file.path, now);
+					if (!autoGhost) this.lastStatusChangeAt.set(file.path, now);
 					if (now - lastChangeAt < STATUS_CORRECTION_WINDOW_MS && fm.statusHistory.length > 1) {
 						const lastEntry = fm.statusHistory[fm.statusHistory.length - 1];
 						if (lastEntry.status === previousStatus && !note) {
@@ -699,6 +719,8 @@ export class ApplicationService {
 						note: note || `Status updated to ${newStatus}`,
 					});
 				});
+
+				if (skipped) return;
 
 				// If a note was provided, append it to the Notes & Activity Log section in the markdown
 				if (note) {

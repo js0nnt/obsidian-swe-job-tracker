@@ -4,6 +4,7 @@
   "description": "Track software engineering applications through OA, recruiter screen, and interview rounds with Kanban, Table, List, and Sankey analytics.",
   "main": "main.js",
   "scripts": {
+    "test:auto-ghost": "node scripts/test-auto-ghost.mjs",
     "test:sankey": "node scripts/test-sankey.mjs",
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",

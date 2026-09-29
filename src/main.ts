@@ -17,11 +17,33 @@ import { JobTrackerView } from "./views/JobTrackerView";
 export default class JobApplicationTrackerPlugin extends Plugin {
 	settings: JobApplicationTrackerSettings = Object.assign({}, DEFAULT_SETTINGS);
 	appService!: ApplicationService;
+	private ghostCheckRunning = false;
+	private unloaded = false;
+
+	async checkForGhostedApplications(): Promise<void> {
+		if (this.unloaded || this.ghostCheckRunning || !this.settings.autoGhostEnabled) return;
+		this.ghostCheckRunning = true;
+		try {
+			for (const application of this.appService.getAllApplications(true)) {
+				if (this.unloaded || !this.settings.autoGhostEnabled) break;
+				await this.appService.autoGhostApplication(application);
+			}
+		} catch (error) {
+			console.error("Job Tracker: Automatic ghosting check failed", error);
+		} finally {
+			this.ghostCheckRunning = false;
+		}
+	}
 
 	async onload() {
 		await this.loadSettings();
 
 		this.appService = new ApplicationService(this.app, this);
+		this.app.workspace.onLayoutReady(() => {
+			if (this.unloaded) return;
+			void this.checkForGhostedApplications();
+			this.registerInterval(window.setInterval(() => void this.checkForGhostedApplications(), 60 * 60 * 1000));
+		});
 
 		// Register custom Job Tracker View
 		this.registerView(
@@ -289,11 +311,12 @@ export default class JobApplicationTrackerPlugin extends Plugin {
 		return leaves.some((leaf) => leaf.getRoot() === this.app.workspace.rootSplit);
 	}
 
-	onunload() {}
+	onunload() { this.unloaded = true; }
 
 	async loadSettings() {
 		const data = (await this.loadData()) as Partial<JobApplicationTrackerSettings> | null;
 		this.settings = {
+			autoGhostEnabled: typeof data?.autoGhostEnabled === "boolean" ? data.autoGhostEnabled : true,
 			trackerFolderPath: data?.trackerFolderPath ?? DEFAULT_SETTINGS.trackerFolderPath,
 			interviewNotesFolderPath: data?.interviewNotesFolderPath ?? DEFAULT_SETTINGS.interviewNotesFolderPath,
 			attachmentsFolderPath: data?.attachmentsFolderPath ?? DEFAULT_SETTINGS.attachmentsFolderPath,

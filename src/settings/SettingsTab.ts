@@ -56,6 +56,21 @@ export class JobApplicationTrackerSettingTab extends PluginSettingTab {
 		return [
 			{
 				type: "group",
+				heading: "Automatic ghosting",
+				items: [{
+					name: "Mark unanswered applications as Ghosted",
+					desc: "After 21 days in Applied/Submitted with no interview recorded. Checks on startup and hourly while Obsidian is open, including existing applications. Move the application to its next stage when you receive a reply.",
+					render: (setting: Setting) => {
+						setting.addToggle(toggle => toggle.setValue(this.plugin.settings.autoGhostEnabled).onChange(async enabled => {
+							this.plugin.settings.autoGhostEnabled = enabled;
+							await this.plugin.saveSettings();
+							if (enabled) void this.plugin.checkForGhostedApplications();
+						}));
+					},
+				}],
+			},
+			{
+				type: "group",
 				heading: "Folders & Storage",
 				items: [
 					{

@@ -133,6 +133,7 @@ date: "{{date}}"
 `;
 
 export const DEFAULT_SETTINGS: JobApplicationTrackerSettings = {
+	autoGhostEnabled: true,
 	sankey: { ...DEFAULT_SANKEY_SETTINGS },
 	trackerFolderPath: "Job Applications",
 	interviewNotesFolderPath: "Job Applications/Interviews",
