@@ -838,14 +838,15 @@
 
 /* Sankey Diagram Container */
 .job-tracker-sankey-container {
+	position: relative;
 	display: block;
 	width: 100%;
-	overflow-x: auto;
+	overflow: hidden;
 	box-sizing: border-box;
 	background-color: var(--background-primary);
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 14px;
-	padding: 20px 12px;
+	padding: 52px 0 0;
 	min-height: 160px;
 }
 
@@ -893,12 +894,37 @@
 .job-tracker-sankey-hint { margin: 10px 0 0; }
 
 .job-tracker-native-sankey-svg {
-	min-width: 640px;
+	min-width: 0;
 	width: 100%;
-	height: auto;
-	max-height: 55vh;
+	height: clamp(320px, 58vh, 720px);
+	touch-action: none;
+	cursor: grab;
+	user-select: none;
 	display: block;
 	margin: 0 auto;
+}
+
+.job-tracker-native-sankey-svg.is-panning,
+.job-tracker-native-sankey-svg.is-panning * { cursor: grabbing; }
+
+.job-tracker-sankey-navigation {
+	position: absolute;
+	top: 10px;
+	right: 10px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px;
+	border-radius: 8px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+}
+
+.job-tracker-sankey-zoom {
+	min-width: 42px;
+	text-align: center;
+	font-size: var(--font-ui-small);
+	font-variant-numeric: tabular-nums;
 }
 
 .job-tracker-sankey-ribbon {

@@ -1,7 +1,9 @@
+import { attachSankeyViewport } from "./SankeyViewport";
 import { StageCategory, getStageRank as stageRank, matchStage } from "../stages";
 import { SankeySettings, normalizeSankeySettings } from "../sankeySettings";
 
 const PALETTES = {
+	reference: ["#199e80", "#d76700", "#e4ad00", "#69a51d", "#1d9f80", "#82ac4d", "#8072b2", "#dfaf08", "#e3258c"],
 	aurora: ["#8b5cf6", "#a78bfa", "#38bdf8", "#2dd4bf", "#34d399", "#10b981", "#f472b6", "#c084fc", "#94a3b8"],
 	sunset: ["#f97316", "#fb923c", "#fbbf24", "#fb7185", "#e879f9", "#a78bfa", "#e11d48", "#c084fc", "#a8a29e"],
 	ocean: ["#0284c7", "#38bdf8", "#22d3ee", "#2dd4bf", "#34d399", "#059669", "#818cf8", "#a78bfa", "#94a3b8"],
@@ -11,6 +13,10 @@ function paletteColor(id: string, palette: SankeySettings["palette"]): string {
 	if (palette === "classic") return getNodeColor(id);
 	const colors = PALETTES[palette];
 	const stage = matchStage(id);
+	if (palette === "reference" && /^Round \d+$/i.test(id)) {
+		const round = Number(id.match(/\d+/)?.[0] || 1);
+		return ["#d76700", "#69a51d", "#aa7b20", "#747474", "#c28d47", "#8072b2"][(round - 1) % 6];
+	}
 	if (stage) return colors[Object.keys(STAGE_COLORS).indexOf(stage)];
 	let hash = 0;
 	for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
@@ -98,7 +104,7 @@ export function formatDisplayLabel(rawLabel: string, value: number, maxChars = 2
 /**
  * Renders a complete interactive Sankey SVG into the provided container.
  */
-export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[], totalApps: number, preferences?: Partial<SankeySettings>): void {
+export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[], totalApps: number, preferences?: Partial<SankeySettings>, stageCounts: ReadonlyMap<string, number> = new Map()): void {
 		const options = normalizeSankeySettings(preferences);
 		container.classList.toggle("has-grid", options.showGrid);
 		const displayLabel = (label: string, value: number): string => {
@@ -117,7 +123,7 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 
 		container.empty();
 
-		if (links.length === 0 || totalApps === 0) {
+		if ((links.length === 0 && stageCounts.size === 0) || totalApps === 0) {
 			container.createEl("p", {
 				text: "No application flow data available yet.",
 				cls: "text-muted",
@@ -138,7 +144,7 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 			incomingMap.get(link.target)!.push(link);
 		}
 
-		const allNodeIds = new Set<string>();
+		const allNodeIds = new Set<string>(stageCounts.keys());
 		for (const link of links) {
 			allNodeIds.add(link.source);
 			allNodeIds.add(link.target);
@@ -190,7 +196,7 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 			}
 		}
 
-		const maxLayer = Array.from(layers.values()).reduce((max, v) => Math.max(max, v), 1);
+		const maxLayer = Array.from(layers.values()).reduce((max, v) => Math.max(max, v), 0);
 
 		// Group and sort nodes by layer to separate progression paths from drop-offs
 		const layerGroups = new Map<number, string[]>();
@@ -229,11 +235,11 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 			}
 		}
 
-		// Calculate node values: max(incomingSum, outgoingSum)
+		// Explicit stage counts include applications still waiting at a stage with no outgoing flow.
 		for (const id of allNodeIds) {
 			const inSum = (incomingMap.get(id) || []).reduce((acc, l) => acc + l.value, 0);
 			const outSum = (outgoingMap.get(id) || []).reduce((acc, l) => acc + l.value, 0);
-			const val = Math.max(inSum, outSum, 1);
+			const val = Math.max(stageCounts.get(id) || 0, inSum, outSum, 1);
 			nodeMap.set(id, {
 				id,
 				label: id,
@@ -272,85 +278,30 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 		let baseHeight = Math.max(280, baseWidth * 0.32);
 
 		const usableWidth = baseWidth - paddingLeft - paddingRight;
-		let usableHeight = baseHeight - paddingY * 2;
+		const usableHeight = baseHeight - paddingY * 2;
 		const layerXStep = maxLayer > 0 ? usableWidth / maxLayer : usableWidth;
 
-		// Compute node heights and adjust baseHeight if columns are tall
-		let maxColHeight = 0;
+		// One shared scale keeps every application's ribbon equally thick across stages.
+		const pixelsPerUnit = Math.min(24, usableHeight / Math.max(totalApps, 1));
+		for (const node of nodeMap.values()) node.height = node.value * pixelsPerUnit;
+		// Place later stages near the center of their incoming flow, then resolve collisions.
+		// Large outcomes rise to the top while smaller progression branches cascade below.
 		for (let layer = 0; layer <= maxLayer; layer++) {
-			const nodeIds = layerGroups.get(layer) || [];
-			if (nodeIds.length === 0) continue;
-
-			const totalValue = nodeIds.reduce((sum, id) => sum + (nodeMap.get(id)?.value || 0), 0);
-			const availableHeight = usableHeight - (nodeIds.length - 1) * nodeGap;
-			// Scale nodes to fit the canvas instead of a fixed px-per-application floor,
-			// which made the diagram hundreds of pixels tall once you had ~100 applications.
-			const pixelsPerUnit = totalValue > 0 ? Math.min(24, Math.max(1, availableHeight / totalValue)) : 16;
-
-			let colHeight = 0;
-			for (const id of nodeIds) {
-				const n = nodeMap.get(id)!;
-				const outCount = outgoingMap.get(id)?.length || 0;
-				const inCount = incomingMap.get(id)?.length || 0;
-				const minPortHeight = Math.max(outCount, inCount) * 4;
-				n.height = Math.max(12, n.value * pixelsPerUnit, minPortHeight);
-				colHeight += n.height;
+			const ids = layerGroups.get(layer) || [];
+			ids.sort((a, b) => nodeMap.get(b)!.value - nodeMap.get(a)!.value || a.localeCompare(b));
+			let bottom = paddingY;
+			for (const id of ids) {
+				const node = nodeMap.get(id)!;
+				const incoming = incomingMap.get(id) || [];
+				const weight = incoming.reduce((sum, link) => sum + link.value, 0);
+				const center = weight ? incoming.reduce((sum, link) => {
+					const parent = nodeMap.get(link.source)!;
+					return sum + (parent.y + parent.height / 2) * link.value;
+				}, 0) / weight : paddingY + node.height / 2;
+				node.x = maxLayer === 0 ? (baseWidth - node.width) / 2 : paddingLeft + layer * layerXStep;
+				node.y = Math.max(bottom, center - node.height / 2);
+				bottom = node.y + node.height + Math.max(nodeGap, 42);
 			}
-			colHeight += (nodeIds.length - 1) * nodeGap;
-			if (colHeight > maxColHeight) maxColHeight = colHeight;
-		}
-
-		if (maxColHeight > usableHeight) {
-			baseHeight = maxColHeight + paddingY * 2;
-			usableHeight = baseHeight - paddingY * 2;
-		}
-
-		// 1. Initial layout: Position all nodes sequentially in each column
-		// Active progression nodes start at paddingY, drop-off nodes follow strictly below
-		for (let layer = 0; layer <= maxLayer; layer++) {
-			const nodeIds = layerGroups.get(layer) || [];
-			if (nodeIds.length === 0) continue;
-
-			const currentX = paddingLeft + layer * layerXStep;
-			let currentY = paddingY;
-
-			const activeNodes = nodeIds.filter((id) => SankeyDiagram.getStageRank(id) < 100);
-			const dropOffNodes = nodeIds.filter((id) => SankeyDiagram.getStageRank(id) >= 100);
-
-			for (const id of activeNodes) {
-				const n = nodeMap.get(id)!;
-				n.x = currentX;
-				n.y = currentY;
-				currentY += n.height + nodeGap;
-			}
-
-			if (dropOffNodes.length > 0) {
-				if (activeNodes.length > 0) {
-					currentY = Math.max(currentY + nodeGap, paddingY + usableHeight * 0.45);
-				} else {
-					currentY = Math.max(paddingY + usableHeight * 0.45, paddingY);
-				}
-
-				for (const id of dropOffNodes) {
-					const n = nodeMap.get(id)!;
-					n.x = currentX;
-					n.y = currentY;
-					currentY += n.height + nodeGap;
-				}
-			}
-		}
-
-		// 2. Determine active obstacle boundaries per column
-		const colActiveBottom = new Map<number, number>();
-		for (let layer = 0; layer <= maxLayer; layer++) {
-			let maxB = paddingY;
-			for (const id of (layerGroups.get(layer) || [])) {
-				if (SankeyDiagram.getStageRank(id) < 100) {
-					const n = nodeMap.get(id)!;
-					maxB = Math.max(maxB, n.y + n.height);
-				}
-			}
-			colActiveBottom.set(layer, maxB);
 		}
 
 		// 3. Pre-compute link port offsets sorted by target/source vertical positions
@@ -380,12 +331,9 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 				}
 				return a.target.localeCompare(b.target);
 			});
-
-			const totalOutVal = outLinks.reduce((sum, l) => sum + l.value, 0);
 			let sOffset = 0;
 			for (const link of outLinks) {
-				const rawH = totalOutVal > 0 ? (link.value / totalOutVal) * srcNode.height : srcNode.height;
-				const h = Math.max(4, rawH);
+				const h = link.value * pixelsPerUnit;
 				sourceLinkHeights.set(link, h);
 				sourceLinkOffsets.set(link, sOffset);
 				sOffset += h;
@@ -413,12 +361,9 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 				}
 				return a.source.localeCompare(b.source);
 			});
-
-			const totalInVal = inLinks.reduce((sum, l) => sum + l.value, 0);
 			let tOffset = 0;
 			for (const link of inLinks) {
-				const rawH = totalInVal > 0 ? (link.value / totalInVal) * tgtNode.height : tgtNode.height;
-				const h = Math.max(4, rawH);
+				const h = link.value * pixelsPerUnit;
 				targetLinkHeights.set(link, h);
 				targetLinkOffsets.set(link, tOffset);
 				tOffset += h;
@@ -431,35 +376,6 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 			maxTotalHeight = Math.max(maxTotalHeight, n.y + n.height + paddingY);
 		}
 
-		// Account for multi-layer link ribbons that curve below intermediate obstacles
-		for (const link of links) {
-			const sourceNode = nodeMap.get(link.source);
-			const targetNode = nodeMap.get(link.target);
-			if (!sourceNode || !targetNode || targetNode.layer <= sourceNode.layer + 1) continue;
-
-			let minClearY = 0;
-			for (let m = sourceNode.layer + 1; m < targetNode.layer; m++) {
-				const colBottom = colActiveBottom.get(m) || 0;
-				if (colBottom > minClearY) minClearY = colBottom + nodeGap;
-			}
-
-			if (minClearY > 0) {
-				const sOffset = sourceLinkOffsets.get(link) || 0;
-				const tOffset = targetLinkOffsets.get(link) || 0;
-				const sH = sourceLinkHeights.get(link) || 4;
-				const tH = targetLinkHeights.get(link) || 4;
-				const y0 = sourceNode.y + sOffset;
-				const y1 = targetNode.y + tOffset;
-				if (Math.min(y0, y1) < minClearY) {
-					const ctrlYBot = Math.max(
-						y0 + sH,
-						y1 + tH,
-						(minClearY + Math.max(sH, tH) - 0.125 * (y0 + sH + y1 + tH)) / 0.75
-					);
-					maxTotalHeight = Math.max(maxTotalHeight, ctrlYBot + paddingY);
-				}
-			}
-		}
 		baseHeight = maxTotalHeight;
 
 		// 5. Build SVG with Obsidian's createSvg helper
@@ -474,6 +390,8 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 		});
 
 		// Definitions for gradients & filters
+		attachSankeyViewport(container, svg, baseWidth, baseHeight, signal);
+
 		const defs = svg.createSvg("defs");
 
 		// Draw Links (Ribbons)
@@ -509,60 +427,12 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 			const x1 = targetNode.x;
 			const y1 = targetNode.y + tOffset;
 
-			let pathData: string;
-
-			if (targetNode.layer <= sourceNode.layer + 1) {
-				// Direct adjacent transition: smooth standard cubic Bezier
-				const curvature = 0.5;
-				const xi = x0 + (x1 - x0) * curvature;
-				pathData = `
-					M ${x0} ${y0}
-					C ${xi} ${y0}, ${xi} ${y1}, ${x1} ${y1}
-					L ${x1} ${y1 + targetLinkHeight}
-					C ${xi} ${y1 + targetLinkHeight}, ${xi} ${y0 + sourceLinkHeight}, ${x0} ${y0 + sourceLinkHeight}
-					Z
-				`;
-			} else {
-				// Multi-layer jump: check if intermediate active obstacles need clearance
-				let minClearY = 0;
-				for (let m = sourceNode.layer + 1; m < targetNode.layer; m++) {
-					const colBottom = colActiveBottom.get(m) || 0;
-					if (colBottom > minClearY) {
-						minClearY = colBottom + nodeGap;
-					}
-				}
-
-				if (minClearY > 0 && Math.min(y0, y1) < minClearY) {
-					// Closed-form target control Y ensuring Bezier at t=0.5 clears minClearY
-					const ctrlYTop = Math.max(y0, y1, (minClearY - 0.125 * (y0 + y1)) / 0.75);
-					const ctrlYBot = Math.max(
-						y0 + sourceLinkHeight,
-						y1 + targetLinkHeight,
-						(minClearY + Math.max(sourceLinkHeight, targetLinkHeight) - 0.125 * (y0 + sourceLinkHeight + y1 + targetLinkHeight)) / 0.75
-					);
-
-					const cx1 = x0 + (x1 - x0) * 0.35;
-					const cx2 = x1 - (x1 - x0) * 0.35;
-
-					pathData = `
-						M ${x0} ${y0}
-						C ${cx1} ${ctrlYTop}, ${cx2} ${ctrlYTop}, ${x1} ${y1}
-						L ${x1} ${y1 + targetLinkHeight}
-						C ${cx2} ${ctrlYBot}, ${cx1} ${ctrlYBot}, ${x0} ${y0 + sourceLinkHeight}
-						Z
-					`;
-				} else {
-					const curvature = 0.5;
-					const xi = x0 + (x1 - x0) * curvature;
-					pathData = `
-						M ${x0} ${y0}
-						C ${xi} ${y0}, ${xi} ${y1}, ${x1} ${y1}
-						L ${x1} ${y1 + targetLinkHeight}
-						C ${xi} ${y1 + targetLinkHeight}, ${xi} ${y0 + sourceLinkHeight}, ${x0} ${y0 + sourceLinkHeight}
-						Z
-					`;
-				}
-			}
+			const cx0 = x0 + (x1 - x0) * 0.45;
+			const cx1 = x1 - (x1 - x0) * 0.45;
+			const pathData = `M ${x0} ${y0}
+				C ${cx0} ${y0}, ${cx1} ${y1}, ${x1} ${y1}
+				L ${x1} ${y1 + targetLinkHeight}
+				C ${cx1} ${y1 + targetLinkHeight}, ${cx0} ${y0 + sourceLinkHeight}, ${x0} ${y0 + sourceLinkHeight} Z`;
 
 			// Create linear gradient for link
 			const gradId = `sankey-grad-${crypto.randomUUID()}`;
@@ -631,8 +501,8 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 					y: `${node.y}`,
 					width: `${node.width}`,
 					height: `${node.height}`,
-					rx: "5",
-					ry: "5",
+					rx: "1",
+					ry: "1",
 					fill: node.color,
 					stroke: "var(--background-primary, #ffffff)",
 					"stroke-width": "1",
@@ -640,19 +510,15 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 			});
 
 			// Text Label
-			const isRightSide = node.layer === maxLayer;
-			let labelX = `${node.x + node.width / 2}`;
-			let labelY = `${Math.max(14, node.y - 6)}`;
-			let textAnchor = "middle";
-
-			if (isRightSide) {
-				labelX = `${node.x + node.width + 8}`;
-				labelY = `${node.y + node.height / 2 + 4}`;
-				textAnchor = "start";
-			} else if (node.layer === 0) {
-				labelX = `${node.x - 8}`;
-				labelY = `${node.y + node.height / 2 + 4}`;
-				textAnchor = "end";
+			const labelX = String(node.layer === 0 ? node.x - 10 : node.x + node.width + 10);
+			const labelY = String(node.y + node.height / 2 + 15);
+			const textAnchor = node.layer === 0 ? "end" : "start";
+			if (options.labels !== "names") {
+				const count = g.createSvg("text", { attr: {
+					x: labelX, y: String(node.y + node.height / 2 - 3),
+					"text-anchor": textAnchor, "font-size": "25px", fill: "var(--text-normal)",
+				} });
+				count.textContent = options.labels === "percentages" ? `${Math.round(node.value / totalApps * 100)}%` : String(node.value);
 			}
 
 			const labelText = g.createSvg("text", {
@@ -666,7 +532,7 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 					"text-anchor": textAnchor,
 				},
 			});
-			labelText.textContent = displayLabel(node.label, node.value);
+			labelText.textContent = formatDisplayLabel(node.label, node.value).replace(/ \(\d+\)$/, "");
 
 			const cleanNodeLabel = node.label.includes(": ") ? node.label.split(": ").pop()! : node.label;
 			const nodeTitle = g.createSvg("title");

@@ -48,7 +48,7 @@ export class MetricsRenderer {
 		this.renderSankeyControls(controls, sankeyContent);
 		this.renderSankeyDiagram(sankeyContent);
 		sankeySection.createEl("p", {
-			text: "Hover or tab to a flow or stage to explore connections. Percentages show the share of all applications.",
+			text: "Drag to pan · Scroll to zoom · Center in view to reset. Keyboard: focus the canvas, use arrows to pan, +/− to zoom, Home to center. Percentages show the share of all applications.",
 			cls: "text-muted job-tracker-sankey-hint",
 		});
 
@@ -188,7 +188,7 @@ export class MetricsRenderer {
 			});
 		};
 		new Setting(controls).setName("Color palette").addDropdown(d => d
-			.addOptions({ aurora: "Aurora · violet & mint", sunset: "Sunset · coral & gold", ocean: "Ocean · blue & teal", classic: "Classic · status colors" })
+			.addOptions({ reference: "Reference · vibrant outcomes", aurora: "Aurora · violet & mint", sunset: "Sunset · coral & gold", ocean: "Ocean · blue & teal", classic: "Classic · status colors" })
 			.setValue(options.palette).onChange(value => update({ palette: value as SankeySettings["palette"] })));
 		new Setting(controls).setName("Flow colors").addDropdown(d => d
 			.addOptions({ gradient: "Blend between stages", source: "Match starting stage", target: "Match destination" })
@@ -204,8 +204,8 @@ export class MetricsRenderer {
 			.onChange(value => update({ opacity: value })));
 		new Setting(controls).setName("Dotted background").addToggle(t => t
 			.setValue(options.showGrid).onChange(value => update({ showGrid: value })));
-		new Setting(controls).setName("Restore chart defaults").addButton(b => b
-			.setButtonText("Reset style").onClick(() => {
+		new Setting(controls).setName("Use reference style").setDesc("Vibrant outcomes, soft solid flows, and a clean background.").addButton(b => b
+			.setButtonText("Apply reference style").onClick(() => {
 				update({ ...DEFAULT_SANKEY_SETTINGS });
 				this.renderSankeyControls(controls, chart);
 			}));
@@ -272,16 +272,18 @@ export class MetricsRenderer {
 			targets.add(cleanTo);
 		};
 
-		// Track each application along the exact sequence of statuses it entered and exited
+		const stageCounts = new Map<string, number>();
+		// Count every visited stage, including applications without any transitions.
 		for (const app of this.view.applications) {
-			const source = "All applications";
-			const visited = this.view.getVisitedStatuses(app);
+			const visited = this.view.getVisitedStatuses(app)
+				.map(stage => stage.replace(/[,;"\n\r]+/g, " ").trim())
+				.filter(Boolean);
 
 			if (visited.length === 0) continue;
 
-			// A single entry point includes applications that have not changed stages yet.
-			const firstStage = visited[0];
-			addTransition(source, firstStage, 1);
+			for (const stage of new Set(visited)) {
+				stageCounts.set(stage, (stageCounts.get(stage) || 0) + 1);
+			}
 
 			// Connect all sequential stage transitions
 			for (let i = 0; i < visited.length - 1; i++) {
@@ -289,14 +291,6 @@ export class MetricsRenderer {
 				const toStage = visited[i + 1];
 				addTransition(fromStage, toStage, 1);
 			}
-		}
-
-		if (transitionMap.size === 0) {
-			container.createEl("p", {
-				text: "Not enough flow transitions to render diagram.",
-				cls: "text-muted",
-			});
-			return;
 		}
 
 		const sankeyLinks: SankeyLink[] = [];
@@ -309,6 +303,6 @@ export class MetricsRenderer {
 			});
 		}
 
-		SankeyDiagram.render(container, sankeyLinks, this.view.applications.length, this.view.plugin.settings.sankey);
+		SankeyDiagram.render(container, sankeyLinks, this.view.applications.length, this.view.plugin.settings.sankey, stageCounts);
 	}
 }
