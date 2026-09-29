@@ -1,4 +1,5 @@
-import { setIcon } from "obsidian";
+import { Notice, Setting, setIcon } from "obsidian";
+import { DEFAULT_SANKEY_SETTINGS, SankeySettings } from "../../sankeySettings";
 import { getStatusClassName } from "../../constants";
 import { SankeyDiagram, SankeyLink } from "../SankeyDiagram";
 import { JobTrackerView } from "../JobTrackerView";
@@ -34,14 +35,22 @@ export class MetricsRenderer {
 
 		// 2. Section: Sankey Pipeline Flow Diagram
 		const sankeySection = metricsContainer.createDiv({ cls: "job-tracker-metrics-section" });
-		sankeySection.createEl("h4", { text: "Job Search Sankey Diagram" });
+		sankeySection.createEl("h4", { text: "Your application journey" });
 		sankeySection.createEl("p", {
 			text: "Visual flow of your job hunt based on actual statuses entered/exited, from source to final outcomes.",
 			cls: "text-muted job-tracker-sankey-desc",
 		});
 
+		const customization = sankeySection.createEl("details", { cls: "job-tracker-sankey-customize" });
+		customization.createEl("summary", { text: "Customize Sankey" });
+		const controls = customization.createDiv({ cls: "job-tracker-sankey-controls" });
 		const sankeyContent = sankeySection.createDiv({ cls: "job-tracker-sankey-container" });
+		this.renderSankeyControls(controls, sankeyContent);
 		this.renderSankeyDiagram(sankeyContent);
+		sankeySection.createEl("p", {
+			text: "Hover or tab to a flow or stage to explore connections. Percentages show the share of all applications.",
+			cls: "text-muted job-tracker-sankey-hint",
+		});
 
 		// 3. Section: Pipeline Stage Breakdown
 		const funnelSection = metricsContainer.createDiv({ cls: "job-tracker-metrics-section is-half" });
@@ -199,6 +208,42 @@ export class MetricsRenderer {
 		card.createDiv({ text: subtext, cls: "job-tracker-kpi-subtext" });
 	}
 
+	private renderSankeyControls(controls: HTMLElement, chart: HTMLElement): void {
+		controls.empty();
+		const options = this.view.plugin.settings.sankey;
+		const update = (patch: Partial<SankeySettings>) => {
+			this.view.plugin.settings.sankey = { ...this.view.plugin.settings.sankey, ...patch };
+			this.renderSankeyDiagram(chart);
+			// Keep the controls mounted so keyboard focus and slider interaction survive.
+			void this.view.plugin.saveSettings(false).catch((error: unknown) => {
+				console.error("Job Tracker: Could not save Sankey preferences", error);
+				new Notice("Could not save chart preferences. Please try again.");
+			});
+		};
+		new Setting(controls).setName("Color palette").addDropdown(d => d
+			.addOptions({ aurora: "Aurora · violet & mint", sunset: "Sunset · coral & gold", ocean: "Ocean · blue & teal", classic: "Classic · status colors" })
+			.setValue(options.palette).onChange(value => update({ palette: value as SankeySettings["palette"] })));
+		new Setting(controls).setName("Flow colors").addDropdown(d => d
+			.addOptions({ gradient: "Blend between stages", source: "Match starting stage", target: "Match destination" })
+			.setValue(options.flowStyle).onChange(value => update({ flowStyle: value as SankeySettings["flowStyle"] })));
+		new Setting(controls).setName("Spacing").addDropdown(d => d
+			.addOptions({ compact: "Compact", comfortable: "Comfortable", airy: "Airy" })
+			.setValue(options.spacing).onChange(value => update({ spacing: value as SankeySettings["spacing"] })));
+		new Setting(controls).setName("Labels").addDropdown(d => d
+			.addOptions({ counts: "Names & counts", percentages: "Names & percentages", names: "Names only" })
+			.setValue(options.labels).onChange(value => update({ labels: value as SankeySettings["labels"] })));
+		new Setting(controls).setName("Flow opacity").addSlider(s => s
+			.setLimits(15, 90, 5).setValue(options.opacity).setDynamicTooltip()
+			.onChange(value => update({ opacity: value })));
+		new Setting(controls).setName("Dotted background").addToggle(t => t
+			.setValue(options.showGrid).onChange(value => update({ showGrid: value })));
+		new Setting(controls).setName("Restore chart defaults").addButton(b => b
+			.setButtonText("Reset style").onClick(() => {
+				update({ ...DEFAULT_SANKEY_SETTINGS });
+				this.renderSankeyControls(controls, chart);
+			}));
+	}
+
 	renderSankeyDiagram(container: HTMLElement) {
 		container.empty();
 
@@ -297,6 +342,6 @@ export class MetricsRenderer {
 			});
 		}
 
-		SankeyDiagram.render(container, sankeyLinks, this.view.applications.length);
+		SankeyDiagram.render(container, sankeyLinks, this.view.applications.length, this.view.plugin.settings.sankey);
 	}
 }

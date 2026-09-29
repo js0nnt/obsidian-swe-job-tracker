@@ -1,4 +1,5 @@
 import { getStageCategory } from "./stages";
+import { DEFAULT_SANKEY_SETTINGS } from "./sankeySettings";
 import { EmploymentType, JobApplicationTrackerSettings, JobStatus, WorkplaceType } from "./types";
 
 export const VIEW_TYPE_JOB_TRACKER = "swe-job-tracker-view";
@@ -132,6 +133,7 @@ date: "{{date}}"
 `;
 
 export const DEFAULT_SETTINGS: JobApplicationTrackerSettings = {
+	sankey: { ...DEFAULT_SANKEY_SETTINGS },
 	trackerFolderPath: "Job Applications",
 	interviewNotesFolderPath: "Job Applications/Interviews",
 	attachmentsFolderPath: "Job Applications/Attachments",

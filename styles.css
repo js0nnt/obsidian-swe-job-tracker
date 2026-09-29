@@ -844,10 +844,53 @@
 	box-sizing: border-box;
 	background-color: var(--background-primary);
 	border: 1px solid var(--background-modifier-border);
-	border-radius: 6px;
-	padding: 8px;
+	border-radius: 14px;
+	padding: 20px 12px;
 	min-height: 160px;
 }
+
+.job-tracker-sankey-container.has-grid {
+	background-image: radial-gradient(circle, var(--background-modifier-border) 1px, transparent 1px);
+	background-size: 18px 18px;
+}
+
+.job-tracker-sankey-customize {
+	margin: 12px 0;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 10px;
+	background: var(--background-secondary);
+}
+
+.job-tracker-sankey-customize summary {
+	cursor: pointer;
+	padding: 12px 16px;
+	font-size: var(--font-ui-small);
+	font-weight: 600;
+}
+
+.job-tracker-sankey-controls {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
+	gap: 0 24px;
+	padding: 0 16px 12px;
+}
+
+.job-tracker-sankey-controls .setting-item {
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 10px 0;
+}
+
+.job-tracker-sankey-controls .setting-item-name,
+.job-tracker-sankey-hint {
+	font-size: var(--font-ui-smaller);
+}
+
+.job-tracker-sankey-controls .setting-item-control {
+	flex-shrink: 1;
+}
+
+.job-tracker-sankey-hint { margin: 10px 0 0; }
 
 .job-tracker-native-sankey-svg {
 	min-width: 640px;
@@ -898,9 +941,25 @@
 }
 
 .job-tracker-sankey-node text {
+	paint-order: stroke;
+	stroke: var(--background-primary);
+	stroke-width: 3px;
+	stroke-linejoin: round;
 	user-select: none;
 	pointer-events: none;
 	transition: opacity 0.2s ease;
+}
+
+.job-tracker-sankey-ribbon:focus-visible,
+.job-tracker-sankey-node:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.job-tracker-sankey-ribbon,
+	.job-tracker-sankey-node,
+	.job-tracker-sankey-node rect { transition: none; }
 }
 
 /* Funnel Progress Bars */

@@ -1,6 +1,7 @@
 import { Notice, Plugin, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
 import { JobApplicationTrackerSettings, JobApplication } from "./types";
 import { DEFAULT_SETTINGS, VIEW_TYPE_JOB_TRACKER } from "./constants";
+import { normalizeSankeySettings } from "./sankeySettings";
 import { ApplicationService } from "./services/ApplicationService";
 import { JobApplicationTrackerSettingTab } from "./settings/SettingsTab";
 import { NewApplicationModal } from "./modals/NewApplicationModal";
@@ -305,11 +306,13 @@ export default class JobApplicationTrackerPlugin extends Plugin {
 				? [...data.defaultSourceOptions]
 				: [...DEFAULT_SETTINGS.defaultSourceOptions],
 			openViewLocation: data?.openViewLocation ?? DEFAULT_SETTINGS.openViewLocation,
+			sankey: normalizeSankeySettings(data?.sankey),
 		};
 	}
 
-	async saveSettings() {
+	async saveSettings(refreshViews = true) {
 		await this.saveData(this.settings);
+		if (!refreshViews) return;
 		this.appService?.invalidateCache();
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_JOB_TRACKER)) {
 			if (leaf.view instanceof JobTrackerView) {

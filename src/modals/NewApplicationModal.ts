@@ -324,7 +324,7 @@ export class NewApplicationModal extends Modal {
 				});
 			}
 
-			const file = await this.plugin.appService.createApplication({
+			await this.plugin.appService.createApplication({
 				company: this.company.trim(),
 				role: this.role.trim(),
 				status: this.status,
@@ -343,10 +343,6 @@ export class NewApplicationModal extends Modal {
 			});
 
 			this.close();
-
-			// Open the newly created note in a workspace tab
-			const leaf = this.app.workspace.getLeaf("tab");
-			await leaf.openFile(file);
 		} catch (err) {
 			console.error("Job Tracker: Modal action failed:", err);
 			new Notice(`Operation failed: ${err instanceof Error ? err.message : "Unknown error"}`);

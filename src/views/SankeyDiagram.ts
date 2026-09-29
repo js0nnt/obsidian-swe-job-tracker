@@ -1,4 +1,21 @@
 import { StageCategory, getStageRank as stageRank, matchStage } from "../stages";
+import { SankeySettings, normalizeSankeySettings } from "../sankeySettings";
+
+const PALETTES = {
+	aurora: ["#8b5cf6", "#a78bfa", "#38bdf8", "#2dd4bf", "#34d399", "#10b981", "#f472b6", "#c084fc", "#94a3b8"],
+	sunset: ["#f97316", "#fb923c", "#fbbf24", "#fb7185", "#e879f9", "#a78bfa", "#e11d48", "#c084fc", "#a8a29e"],
+	ocean: ["#0284c7", "#38bdf8", "#22d3ee", "#2dd4bf", "#34d399", "#059669", "#818cf8", "#a78bfa", "#94a3b8"],
+};
+
+function paletteColor(id: string, palette: SankeySettings["palette"]): string {
+	if (palette === "classic") return getNodeColor(id);
+	const colors = PALETTES[palette];
+	const stage = matchStage(id);
+	if (stage) return colors[Object.keys(STAGE_COLORS).indexOf(stage)];
+	let hash = 0;
+	for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
+	return colors[Math.abs(hash) % colors.length];
+}
 
 /**
  * Native SVG Sankey Diagram Renderer for Obsidian Job Application Tracker.
@@ -81,7 +98,15 @@ export function formatDisplayLabel(rawLabel: string, value: number, maxChars = 2
 /**
  * Renders a complete interactive Sankey SVG into the provided container.
  */
-export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[], totalApps: number): void {
+export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[], totalApps: number, preferences?: Partial<SankeySettings>): void {
+		const options = normalizeSankeySettings(preferences);
+		container.classList.toggle("has-grid", options.showGrid);
+		const displayLabel = (label: string, value: number): string => {
+			const name = formatDisplayLabel(label, value).replace(/ \(\d+\)$/, "");
+			if (options.labels === "names") return name;
+			if (options.labels === "percentages") return `${name} (${totalApps > 0 ? Math.round(value / totalApps * 100) : 0}%)`;
+			return formatDisplayLabel(label, value);
+		};
 		const prevController = (container as unknown as { _sankeyAbort?: AbortController })._sankeyAbort;
 		if (prevController) {
 			prevController.abort();
@@ -216,9 +241,9 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 				value: val,
 				x: 0,
 				y: 0,
-				width: 14,
+				width: options.spacing === "compact" ? 12 : 18,
 				height: 0,
-				color: getNodeColor(id),
+				color: paletteColor(id, options.palette),
 			});
 		}
 
@@ -229,20 +254,21 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 
 		const maxLeftChars = leftNodeIds.reduce((max, id) => {
 			const n = nodeMap.get(id);
-			return Math.max(max, formatDisplayLabel(n?.label || id, n?.value || 0).length);
+			return Math.max(max, displayLabel(n?.label || id, n?.value || 0).length);
 		}, 10);
 
 		const maxRightChars = rightNodeIds.reduce((max, id) => {
 			const n = nodeMap.get(id);
-			return Math.max(max, formatDisplayLabel(n?.label || id, n?.value || 0).length);
+			return Math.max(max, displayLabel(n?.label || id, n?.value || 0).length);
 		}, 10);
 
 		const paddingLeft = Math.max(120, Math.min(220, Math.ceil(maxLeftChars * 7.5) + 24));
 		const paddingRight = Math.max(120, Math.min(220, Math.ceil(maxRightChars * 7.5) + 24));
 		const paddingY = 24;
-		const nodeGap = 10;
+		const nodeGap = { compact: 14, comfortable: 26, airy: 42 }[options.spacing];
 
-		const baseWidth = Math.max(800, maxLayer * 150 + paddingLeft + paddingRight);
+		const columnWidth = { compact: 150, comfortable: 190, airy: 240 }[options.spacing];
+		const baseWidth = Math.max(800, maxLayer * columnWidth + paddingLeft + paddingRight);
 		let baseHeight = Math.max(280, baseWidth * 0.32);
 
 		const usableWidth = baseWidth - paddingLeft - paddingRight;
@@ -442,7 +468,7 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 			attr: {
 				viewBox: `0 0 ${baseWidth} ${baseHeight}`,
 				preserveAspectRatio: "xMidYMid meet",
-				role: "img",
+				role: "group",
 				"aria-label": "Sankey diagram showing job application pipeline flow",
 			},
 		});
@@ -554,16 +580,16 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 			grad.createSvg("stop", {
 				attr: {
 					offset: "0%",
-					"stop-color": sourceNode.color,
-					"stop-opacity": "0.55",
+					"stop-color": options.flowStyle === "target" ? targetNode.color : sourceNode.color,
+					"stop-opacity": `${options.opacity / 100}`,
 				},
 			});
 
 			grad.createSvg("stop", {
 				attr: {
 					offset: "100%",
-					"stop-color": targetNode.color,
-					"stop-opacity": "0.55",
+					"stop-color": options.flowStyle === "source" ? sourceNode.color : targetNode.color,
+					"stop-opacity": `${options.opacity / 100}`,
 				},
 			});
 
@@ -605,8 +631,8 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 					y: `${node.y}`,
 					width: `${node.width}`,
 					height: `${node.height}`,
-					rx: "3",
-					ry: "3",
+					rx: "5",
+					ry: "5",
 					fill: node.color,
 					stroke: "var(--background-primary, #ffffff)",
 					"stroke-width": "1",
@@ -640,7 +666,7 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 					"text-anchor": textAnchor,
 				},
 			});
-			labelText.textContent = formatDisplayLabel(node.label, node.value);
+			labelText.textContent = displayLabel(node.label, node.value);
 
 			const cleanNodeLabel = node.label.includes(": ") ? node.label.split(": ").pop()! : node.label;
 			const nodeTitle = g.createSvg("title");
@@ -715,6 +741,10 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 
 		// Attach focus event listeners without DOM mutations
 		for (const r of allRibbonEls) {
+			r.el.setAttribute("tabindex", "0");
+			r.el.setAttribute("aria-label", r.el.querySelector("title")?.textContent || "Application flow");
+			r.el.addEventListener("focus", () => focusRibbon(r), { signal });
+			r.el.addEventListener("blur", resetFocus, { signal });
 			r.el.addEventListener(
 				"pointerenter",
 				(e) => {
@@ -726,6 +756,10 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 		}
 
 		for (const n of allNodeEls) {
+			n.el.setAttribute("tabindex", "0");
+			n.el.setAttribute("aria-label", n.el.querySelector("title")?.textContent || n.id);
+			n.el.addEventListener("focus", () => focusNode(n.id), { signal });
+			n.el.addEventListener("blur", resetFocus, { signal });
 			n.el.addEventListener(
 				"pointerenter",
 				(e) => {
