@@ -40,7 +40,6 @@ export class TableRenderer {
 			{ label: "Applied Date", field: "dateApplied" },
 			{ label: "Location", field: "location" },
 			{ label: "Salary", field: "salary" },
-			{ label: "Source", field: "source" },
 		];
 
 		for (const col of columns) {
@@ -122,23 +121,12 @@ export class TableRenderer {
 			// Applied Date
 			tr.createEl("td", { text: app.dateApplied || "-" });
 
-			// Location & Workplace Model
-			const tdLoc = tr.createEl("td");
-			if (app.location && app.workplaceType) {
-				tdLoc.createSpan({ text: `${app.location} (${app.workplaceType})` });
-			} else if (app.location) {
-				tdLoc.createSpan({ text: app.location });
-			} else if (app.workplaceType) {
-				tdLoc.createSpan({ text: app.workplaceType });
-			} else {
-				tdLoc.createSpan({ text: "-", cls: "text-muted" });
-			}
+			// Location
+			tr.createEl("td", { text: app.location || "-" });
 
 			// Salary
 			tr.createEl("td", { text: app.salary || "-" });
 
-			// Source
-			tr.createEl("td", { text: app.source || "-" });
 
 			// Contacts
 			const tdContacts = tr.createEl("td");

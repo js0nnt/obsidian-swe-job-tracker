@@ -29,9 +29,9 @@ class Element {
 }
 
 async function loadModule(path) {
-	const { outputFiles } = await build({ entryPoints: [path], bundle: true, write: false, platform: "node", format: "cjs" });
+	const { outputFiles } = await build({ entryPoints: [path], bundle: true, write: false, platform: "node", format: "cjs", external: ["obsidian"] });
 	const module = { exports: {} };
-	runInNewContext(outputFiles[0].text, { module, exports: module.exports, crypto: webcrypto, AbortController });
+	runInNewContext(outputFiles[0].text, { module, exports: module.exports, crypto: webcrypto, AbortController, require: () => ({}) });
 	return module.exports;
 }
 
@@ -89,3 +89,27 @@ renderSankeyDiagram(container, [], 0);
 assert.equal(container.all("svg").length, 0);
 assert.equal(container.all("p").length, 1);
 console.log(`Passed ${cases} Sankey style combinations, settings validation, keyboard focus, redraw cleanup, and empty state.`);
+
+const { MetricsRenderer } = await loadModule("src/views/renderers/MetricsRenderer.ts");
+const applications = [
+	{ source: "LinkedIn", stages: ["Applied"] },
+	{ source: "Referral", stages: ["Applied", "Offer"] },
+	{ stages: ["Applied", "Rejected"] },
+];
+const metrics = new MetricsRenderer({
+	applications,
+	plugin: { settings: { sankey: DEFAULT_SANKEY_SETTINGS } },
+	getVisitedStatuses: app => app.stages,
+});
+metrics.renderSankeyDiagram(container);
+const nodeLabels = container.all("text").map(node => node.textContent);
+assert.ok(nodeLabels.includes("All applications (3)"));
+assert.ok(nodeLabels.includes("Applied (3)"));
+assert.ok(nodeLabels.includes("Offer (1)"));
+assert.ok(nodeLabels.includes("Rejected (1)"));
+assert.equal(container.all("path").length, 3);
+assert.ok(!nodeLabels.some(label => /LinkedIn|Referral|Direct/.test(label)));
+applications.splice(1);
+metrics.renderSankeyDiagram(container);
+assert.ok(container.all("text").some(node => node.textContent === "Applied (1)"));
+console.log("Passed source-independent pipeline counts and applications without stage transitions.");

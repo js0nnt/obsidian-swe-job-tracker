@@ -37,7 +37,7 @@ export class MetricsRenderer {
 		const sankeySection = metricsContainer.createDiv({ cls: "job-tracker-metrics-section" });
 		sankeySection.createEl("h4", { text: "Your application journey" });
 		sankeySection.createEl("p", {
-			text: "Visual flow of your job hunt based on actual statuses entered/exited, from source to final outcomes.",
+			text: "Visual flow of your job hunt based on actual statuses entered/exited, from applications to final outcomes.",
 			cls: "text-muted job-tracker-sankey-desc",
 		});
 
@@ -111,39 +111,6 @@ export class MetricsRenderer {
 				progressBg
 					.createDiv({ cls: `job-tracker-progress-fill ${getStatusClassName(st)}` })
 					.setCssStyles({ width: `${share}%` });
-			}
-		}
-
-		// 4. Section: Source Performance Analytics
-		const sourceSection = metricsContainer.createDiv({ cls: "job-tracker-metrics-section is-half" });
-		sourceSection.createEl("h4", { text: "Source Performance & Conversion" });
-
-		if (m.sourceMap.size === 0) {
-			sourceSection.createEl("p", {
-				text: "No source data available yet.",
-				cls: "text-muted",
-			});
-		} else {
-			const sourceTable = sourceSection.createEl("table", { cls: "job-tracker-table job-tracker-source-table" });
-			const stHead = sourceTable.createEl("thead");
-			const stHeadRow = stHead.createEl("tr");
-			stHeadRow.createEl("th", { text: "Source" });
-			stHeadRow.createEl("th", { text: "Applications" });
-			stHeadRow.createEl("th", { text: "OAs" });
-			stHeadRow.createEl("th", { text: "Interviews Landed" });
-			stHeadRow.createEl("th", { text: "Offers Landed" });
-			stHeadRow.createEl("th", { text: "Interview %" });
-
-			const stBody = sourceTable.createEl("tbody");
-			for (const [sourceName, stats] of m.sourceMap.entries()) {
-				const tr = stBody.createEl("tr");
-				tr.createEl("td", { text: sourceName, cls: "font-semibold" });
-				tr.createEl("td", { text: `${stats.total}` });
-				tr.createEl("td", { text: `${stats.oas}` });
-				tr.createEl("td", { text: `${stats.interviews}` });
-				tr.createEl("td", { text: `${stats.offers}` });
-				const srcIvRate = stats.total > 0 ? ((stats.interviews / stats.total) * 100).toFixed(0) : "0";
-				tr.createEl("td", { text: `${srcIvRate}%` });
 			}
 		}
 
@@ -307,12 +274,12 @@ export class MetricsRenderer {
 
 		// Track each application along the exact sequence of statuses it entered and exited
 		for (const app of this.view.applications) {
-			const source = app.source ? app.source : "Direct / Other";
+			const source = "All applications";
 			const visited = this.view.getVisitedStatuses(app);
 
 			if (visited.length === 0) continue;
 
-			// Connect Source to the first stage entered
+			// A single entry point includes applications that have not changed stages yet.
 			const firstStage = visited[0];
 			addTransition(source, firstStage, 1);
 

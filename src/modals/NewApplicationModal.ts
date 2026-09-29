@@ -1,8 +1,8 @@
 import { App, ButtonComponent, Modal, Notice, Setting } from "obsidian";
 import JobApplicationTrackerPlugin from "../main";
-import { Contact, EmploymentType, JobStatus, WorkplaceType } from "../types";
+import { Contact, EmploymentType, JobStatus } from "../types";
 import { sanitizeEmail, sanitizeUrl } from "../services/ApplicationService";
-import { EMPLOYMENT_OPTIONS, WORKPLACE_OPTIONS } from "../constants";
+import { EMPLOYMENT_OPTIONS } from "../constants";
 
 /**
  * Modal for creating a new job application note with details and optional JD attachments.
@@ -15,12 +15,9 @@ export class NewApplicationModal extends Modal {
 	private status: JobStatus;
 	private dateApplied = "";
 	private location = "";
-	private workplaceType: WorkplaceType | "" = "";
 	private employmentType: EmploymentType | "" = "";
 	private salary = "";
 	private jobUrl = "";
-	private source = "";
-	private followUpDate = "";
 	private notes = "";
 	private recruiterName = "";
 	private recruiterEmail = "";
@@ -103,20 +100,6 @@ export class NewApplicationModal extends Modal {
 				});
 			});
 
-		// Workplace Model
-		new Setting(contentEl)
-			.setName("Workplace Model")
-			.setDesc("Work arrangement model")
-			.addDropdown((dropdown) => {
-				dropdown.addOption("", "Select model...");
-				for (const option of WORKPLACE_OPTIONS) {
-					dropdown.addOption(option, option);
-				}
-				dropdown.onChange((value) => {
-					this.workplaceType = value as WorkplaceType | "";
-				});
-			});
-
 		// Employment Type
 		new Setting(contentEl)
 			.setName("Employment Type")
@@ -150,32 +133,6 @@ export class NewApplicationModal extends Modal {
 				text.inputEl.maxLength = 500;
 				text.setPlaceholder("https://company.com/careers/...").onChange((value) => {
 					this.jobUrl = value;
-				});
-			});
-
-		// Source
-		new Setting(contentEl)
-			.setName("Source")
-			.setDesc("Where did you find this role?")
-			.addDropdown((dropdown) => {
-				for (const src of this.plugin.settings.defaultSourceOptions) {
-					dropdown.addOption(src, src);
-				}
-				dropdown.setValue(this.plugin.settings.defaultSourceOptions[0]);
-				this.source = this.plugin.settings.defaultSourceOptions[0];
-				dropdown.onChange((value) => {
-					this.source = value;
-				});
-			});
-
-		// Follow-up Date
-		new Setting(contentEl)
-			.setName("Follow-up Date")
-			.setDesc("Optional reminder or deadline date")
-			.addText((text) => {
-				text.inputEl.type = "date";
-				text.setValue(this.followUpDate).onChange((value) => {
-					this.followUpDate = value;
 				});
 			});
 
@@ -291,10 +248,6 @@ export class NewApplicationModal extends Modal {
 			new Notice("Please select a valid date for Date Applied.");
 			return;
 		}
-		if (this.followUpDate.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(this.followUpDate.trim())) {
-			new Notice("Please select a valid date for Follow-up Date.");
-			return;
-		}
 		if (this.recruiterEmail.trim() && !sanitizeEmail(this.recruiterEmail.trim())) {
 			new Notice("Please enter a valid email address for the contact.");
 			return;
@@ -330,12 +283,9 @@ export class NewApplicationModal extends Modal {
 				status: this.status,
 				dateApplied: this.dateApplied.trim(),
 				location: this.location.trim(),
-				workplaceType: this.workplaceType || undefined,
 				employmentType: this.employmentType || undefined,
 				salary: this.salary.trim(),
 				jobUrl: this.jobUrl.trim(),
-				source: this.source.trim(),
-				followUpDate: this.followUpDate.trim() || undefined,
 				notes: this.notes.trim(),
 				jobDescription: jobDescriptionText.trim() || undefined,
 				jobDescriptionFile: attachmentPath || undefined,

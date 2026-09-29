@@ -1,8 +1,8 @@
 import { App, ButtonComponent, Notice, Setting } from "obsidian";
 import JobApplicationTrackerPlugin from "../main";
-import { EmploymentType, JobApplication, JobStatus, WorkplaceType } from "../types";
+import { EmploymentType, JobApplication, JobStatus } from "../types";
 import { sanitizeUrl } from "../services/ApplicationService";
-import { EMPLOYMENT_OPTIONS, WORKPLACE_OPTIONS } from "../constants";
+import { EMPLOYMENT_OPTIONS } from "../constants";
 import { BaseApplicationModal } from "./BaseApplicationModal";
 
 /**
@@ -14,12 +14,9 @@ export class EditApplicationModal extends BaseApplicationModal {
 	private status: JobStatus = "Applied";
 	private dateApplied = "";
 	private location = "";
-	private workplaceType: WorkplaceType | "" = "";
 	private employmentType: EmploymentType | "" = "";
 	private salary = "";
 	private jobUrl = "";
-	private source = "";
-	private followUpDate = "";
 	private jobDescriptionFile = "";
 	private uploadedFile: File | null = null;
 	private newJobDescriptionText = "";
@@ -49,12 +46,9 @@ export class EditApplicationModal extends BaseApplicationModal {
 		this.status = app.status;
 		this.dateApplied = app.dateApplied;
 		this.location = app.location || "";
-		this.workplaceType = app.workplaceType || "";
 		this.employmentType = app.employmentType || "";
 		this.salary = app.salary || "";
 		this.jobUrl = app.jobUrl || "";
-		this.source = app.source || "";
-		this.followUpDate = app.followUpDate || "";
 		this.jobDescriptionFile = app.jobDescriptionFile || "";
 	}
 
@@ -133,21 +127,6 @@ export class EditApplicationModal extends BaseApplicationModal {
 				});
 			});
 
-		// Workplace Model
-		new Setting(contentEl)
-			.setName("Workplace Model")
-			.setDesc("Work arrangement model")
-			.addDropdown((dropdown) => {
-				dropdown.addOption("", "Select model...");
-				for (const option of WORKPLACE_OPTIONS) {
-					dropdown.addOption(option, option);
-				}
-				dropdown.setValue(this.workplaceType);
-				dropdown.onChange((value) => {
-					this.workplaceType = value as WorkplaceType | "";
-				});
-			});
-
 		// Employment Type
 		new Setting(contentEl)
 			.setName("Employment Type")
@@ -182,31 +161,6 @@ export class EditApplicationModal extends BaseApplicationModal {
 				text.inputEl.maxLength = 500;
 				text.setValue(this.jobUrl).onChange((value) => {
 					this.jobUrl = value;
-				});
-			});
-
-		// Source
-		new Setting(contentEl)
-			.setName("Source")
-			.setDesc("Where did you find this role?")
-			.addDropdown((dropdown) => {
-				for (const src of this.plugin.settings.defaultSourceOptions) {
-					dropdown.addOption(src, src);
-				}
-				dropdown.setValue(this.source || this.plugin.settings.defaultSourceOptions[0]);
-				dropdown.onChange((value) => {
-					this.source = value;
-				});
-			});
-
-		// Follow-up Date
-		new Setting(contentEl)
-			.setName("Follow-up / Deadline Date")
-			.setDesc("Optional reminder or deadline date")
-			.addText((text) => {
-				text.inputEl.type = "date";
-				text.setValue(this.followUpDate).onChange((value) => {
-					this.followUpDate = value;
 				});
 			});
 
@@ -295,10 +249,6 @@ export class EditApplicationModal extends BaseApplicationModal {
 				new Notice("Please select a valid date for Date Applied.");
 				return;
 			}
-			if (this.followUpDate.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(this.followUpDate.trim())) {
-				new Notice("Please select a valid date for Follow-up Date.");
-				return;
-			}
 			if (this.jobUrl.trim() && !sanitizeUrl(this.jobUrl.trim())) {
 				new Notice("Job URL must begin with http:// or https://");
 				return;
@@ -326,12 +276,9 @@ export class EditApplicationModal extends BaseApplicationModal {
 					status: this.status,
 					dateApplied: this.dateApplied.trim(),
 					location: this.location.trim(),
-					workplaceType: this.workplaceType || undefined,
 					employmentType: this.employmentType || undefined,
 					salary: this.salary.trim(),
 					jobUrl: this.jobUrl.trim(),
-					source: this.source.trim(),
-					followUpDate: this.followUpDate.trim() || undefined,
 					jobDescriptionFile: finalAttachmentPath || undefined,
 				},
 				this.newJobDescriptionText ? this.newJobDescriptionText.trim() : undefined

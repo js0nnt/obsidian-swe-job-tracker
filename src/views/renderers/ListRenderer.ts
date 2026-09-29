@@ -74,30 +74,15 @@ export class ListRenderer {
 				setIcon(itemSpan.createSpan({ cls: "job-tracker-detail-icon" }), "map-pin");
 				itemSpan.createSpan({ text: ` ${app.location}` });
 			}
-			if (app.workplaceType) {
-				const itemSpan = detailsRow.createSpan({ cls: "job-tracker-detail-item" });
-				setIcon(itemSpan.createSpan({ cls: "job-tracker-detail-icon" }), "building");
-				itemSpan.createSpan({ text: ` ${app.workplaceType}` });
-			}
 			if (app.salary) {
 				const itemSpan = detailsRow.createSpan({ cls: "job-tracker-detail-item" });
 				setIcon(itemSpan.createSpan({ cls: "job-tracker-detail-icon" }), "dollar-sign");
 				itemSpan.createSpan({ text: ` ${app.salary}` });
 			}
-			if (app.source) {
-				const itemSpan = detailsRow.createSpan({ cls: "job-tracker-detail-item" });
-				setIcon(itemSpan.createSpan({ cls: "job-tracker-detail-icon" }), "link");
-				itemSpan.createSpan({ text: ` ${app.source}` });
-			}
 			if (app.dateApplied) {
 				const itemSpan = detailsRow.createSpan({ cls: "job-tracker-detail-item" });
 				setIcon(itemSpan.createSpan({ cls: "job-tracker-detail-icon" }), "calendar");
 				itemSpan.createSpan({ text: ` Applied: ${app.dateApplied}` });
-			}
-			if (app.followUpDate) {
-				const itemSpan = detailsRow.createSpan({ cls: "job-tracker-detail-item job-tracker-list-highlight" });
-				setIcon(itemSpan.createSpan({ cls: "job-tracker-detail-icon" }), "bell");
-				itemSpan.createSpan({ text: ` Follow-up: ${app.followUpDate}` });
 			}
 			if (app.jobDescriptionFile) {
 				const isPdf = app.jobDescriptionFile.toLowerCase().endsWith(".pdf");
