@@ -98,6 +98,25 @@ assert.equal(container.all("svg").length, 0);
 assert.equal(container.all("p").length, 1);
 console.log(`Passed ${cases} Sankey style combinations, settings validation, keyboard focus, redraw cleanup, and empty state.`);
 
+// A link that skips a column must route around the nodes in that column, not through them.
+renderSankeyDiagram(container, [
+	{ source: "Applied", target: "OA", value: 9 },
+	{ source: "Applied", target: "Rejected", value: 21 },
+	{ source: "OA", target: "Recruiter Screen", value: 4 },
+	{ source: "OA", target: "Withdrawn", value: 3 },
+	{ source: "Recruiter Screen", target: "Rejected", value: 1 },
+], 166, {}, new Map([["Applied", 166]]));
+const skipping = container.all("path").find(path => path.attributes["data-source"] === "Applied" && path.attributes["data-target"] === "Rejected");
+const points = [...skipping.attributes.d.matchAll(/(-?[\d.]+) (-?[\d.]+)/g)].map(([, x, y]) => ({ x: +x, y: +y }));
+for (const id of ["OA", "Recruiter Screen", "Withdrawn"]) {
+	const rect = container.all("g").find(g => g.attributes["data-node-id"] === id).all("rect")[0].attributes;
+	const [left, top] = [+rect.x, +rect.y];
+	const [right, bottom] = [left + +rect.width, top + +rect.height];
+	const inColumn = points.filter(p => p.x >= left && p.x <= right).map(p => p.y);
+	assert.ok(inColumn.length > 0 && (inColumn.every(y => y <= top) || inColumn.every(y => y >= bottom)), `Applied → Rejected must not pass through ${id}`);
+}
+console.log("Passed multi-column link routing around intermediate nodes.");
+
 const { MetricsRenderer } = await loadModule("src/views/renderers/MetricsRenderer.ts");
 const applications = [
 	{ source: "LinkedIn", stages: ["Applied"] },

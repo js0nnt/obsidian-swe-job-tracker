@@ -46,6 +46,26 @@ export interface SankeyNode {
 	color: string;
 }
 
+/** A column slot in the layout: a real node, or a placeholder for a link passing through. */
+interface LayoutItem {
+	node?: SankeyNode;
+	layer: number;
+	value: number;
+	height: number;
+	rank: number;
+	key: string;
+	y: number;
+}
+
+/** One column-to-column segment of a link. */
+interface Hop {
+	link: SankeyLink;
+	from: LayoutItem;
+	to: LayoutItem;
+	fromOffset: number;
+	toOffset: number;
+}
+
 const STAGE_COLORS: Record<StageCategory, string> = {
 	applied: "var(--job-status-applied)",
 	oa: "var(--job-status-oa)",
@@ -198,41 +218,10 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 
 		const maxLayer = Array.from(layers.values()).reduce((max, v) => Math.max(max, v), 0);
 
-		// Group and sort nodes by layer to separate progression paths from drop-offs
 		const layerGroups = new Map<number, string[]>();
 		for (const [id, layer] of layers.entries()) {
 			if (!layerGroups.has(layer)) layerGroups.set(layer, []);
 			layerGroups.get(layer)!.push(id);
-		}
-
-		for (let layer = 0; layer <= maxLayer; layer++) {
-			const nodeIds = layerGroups.get(layer) || [];
-			if (layer === 0) {
-				// Sources: sort primarily by min target stage rank (e.g. Applied=20 before OA=30)
-				// secondary by volume descending
-				nodeIds.sort((a, b) => {
-					const outsA = outgoingMap.get(a) || [];
-					const outsB = outgoingMap.get(b) || [];
-					const minRankA = outsA.reduce((min, l) => Math.min(min, SankeyDiagram.getStageRank(l.target)), 999);
-					const minRankB = outsB.reduce((min, l) => Math.min(min, SankeyDiagram.getStageRank(l.target)), 999);
-					if (minRankA !== minRankB) return minRankA - minRankB;
-					const valA = outsA.reduce((acc, l) => acc + l.value, 0);
-					const valB = outsB.reduce((acc, l) => acc + l.value, 0);
-					if (valB !== valA) return valB - valA;
-					return a.localeCompare(b);
-				});
-			} else {
-				// Stages: sort by stage rank (positive progression on top, terminal drop-offs on bottom)
-				nodeIds.sort((a, b) => {
-					const rankA = SankeyDiagram.getStageRank(a);
-					const rankB = SankeyDiagram.getStageRank(b);
-					if (rankA !== rankB) return rankA - rankB;
-					const valA = (outgoingMap.get(a) || []).reduce((acc, l) => acc + l.value, 0);
-					const valB = (outgoingMap.get(b) || []).reduce((acc, l) => acc + l.value, 0);
-					if (valB !== valA) return valB - valA;
-					return a.localeCompare(b);
-				});
-			}
 		}
 
 		// Explicit stage counts include applications still waiting at a stage with no outgoing flow.
@@ -283,100 +272,116 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 
 		// One shared scale keeps every application's ribbon equally thick across stages.
 		const pixelsPerUnit = Math.min(24, usableHeight / Math.max(totalApps, 1));
-		for (const node of nodeMap.values()) node.height = node.value * pixelsPerUnit;
-		// Place later stages near the center of their incoming flow, then resolve collisions.
-		// Large outcomes rise to the top while smaller progression branches cascade below.
-		for (let layer = 0; layer <= maxLayer; layer++) {
-			const ids = layerGroups.get(layer) || [];
-			ids.sort((a, b) => nodeMap.get(b)!.value - nodeMap.get(a)!.value || a.localeCompare(b));
-			let bottom = paddingY;
-			for (const id of ids) {
-				const node = nodeMap.get(id)!;
-				const incoming = incomingMap.get(id) || [];
-				const weight = incoming.reduce((sum, link) => sum + link.value, 0);
-				const center = weight ? incoming.reduce((sum, link) => {
-					const parent = nodeMap.get(link.source)!;
-					return sum + (parent.y + parent.height / 2) * link.value;
-				}, 0) / weight : paddingY + node.height / 2;
-				node.x = maxLayer === 0 ? (baseWidth - node.width) / 2 : paddingLeft + layer * layerXStep;
-				node.y = Math.max(bottom, center - node.height / 2);
-				bottom = node.y + node.height + Math.max(nodeGap, 42);
+		const nodeWidth = options.spacing === "compact" ? 12 : 18;
+		const columnX = (layer: number) => maxLayer === 0 ? (baseWidth - nodeWidth) / 2 : paddingLeft + layer * layerXStep;
+
+		// Layered layout: a link that skips columns gets an invisible placeholder in each column
+		// it crosses, so those columns reserve room for it instead of letting it cut through nodes.
+		const columns: LayoutItem[][] = Array.from({ length: maxLayer + 1 }, () => []);
+		const itemById = new Map<string, LayoutItem>();
+		for (const node of nodeMap.values()) {
+			node.height = node.value * pixelsPerUnit;
+			const item: LayoutItem = { node, layer: node.layer, value: node.value, height: node.height, rank: getStageRank(node.id), key: node.id, y: 0 };
+			itemById.set(node.id, item);
+			columns[node.layer].push(item);
+		}
+		const hops: Hop[] = [];
+		const linkHops = new Map<SankeyLink, Hop[]>();
+		const hopsIn = new Map<LayoutItem, Hop[]>();
+		const hopsOut = new Map<LayoutItem, Hop[]>();
+		links.forEach((link, index) => {
+			const chain = [itemById.get(link.source)!];
+			const target = itemById.get(link.target)!;
+			for (let layer = chain[0].layer + 1; layer < target.layer; layer++) {
+				const placeholder: LayoutItem = { layer, value: link.value, height: link.value * pixelsPerUnit, rank: target.rank, key: `${index}:${layer}`, y: 0 };
+				columns[layer].push(placeholder);
+				chain.push(placeholder);
 			}
+			chain.push(target);
+			const chainHops = chain.slice(1).map((to, i): Hop => ({ link, from: chain[i], to, fromOffset: 0, toOffset: 0 }));
+			for (const hop of chainHops) {
+				if (!hopsOut.has(hop.from)) hopsOut.set(hop.from, []);
+				hopsOut.get(hop.from)!.push(hop);
+				if (!hopsIn.has(hop.to)) hopsIn.set(hop.to, []);
+				hopsIn.get(hop.to)!.push(hop);
+			}
+			hops.push(...chainHops);
+			linkHops.set(link, chainHops);
+		});
+
+		// Order each column to minimize crossings (weighted barycenter sweeps). Ties keep the
+		// initial order, so larger flows sit on top and progression stages precede drop-offs.
+		for (const column of columns) column.sort((a, b) => b.value - a.value || a.rank - b.rank || a.key.localeCompare(b.key));
+		const position = new Map<LayoutItem, number>();
+		const reindex = (column: LayoutItem[]) => column.forEach((item, i) => position.set(item, i));
+		columns.forEach(reindex);
+		const sweep = (layer: number, neighbors: Map<LayoutItem, Hop[]>, end: "from" | "to") => {
+			const column = columns[layer];
+			const barycenter = new Map<LayoutItem, number>();
+			for (const item of column) {
+				const adjacent = neighbors.get(item) || [];
+				const weight = adjacent.reduce((sum, hop) => sum + hop.link.value, 0);
+				barycenter.set(item, weight ? adjacent.reduce((sum, hop) => sum + position.get(hop[end])! * hop.link.value, 0) / weight : position.get(item)!);
+			}
+			column.sort((a, b) => barycenter.get(a)! - barycenter.get(b)! || position.get(a)! - position.get(b)!);
+			reindex(column);
+		};
+		const countCrossings = () => {
+			let total = 0;
+			for (let i = 0; i < hops.length; i++) {
+				for (let j = i + 1; j < hops.length; j++) {
+					const a = hops[i], b = hops[j];
+					if (a.from.layer !== b.from.layer || a.to.layer !== b.to.layer) continue;
+					const order = (position.get(a.from)! - position.get(b.from)!) * (position.get(a.to)! - position.get(b.to)!);
+					if (order < 0) total += a.link.value * b.link.value;
+				}
+			}
+			return total;
+		};
+		for (let layer = 1; layer <= maxLayer; layer++) sweep(layer, hopsIn, "from");
+		let best = { crossings: countCrossings(), columns: columns.map(column => [...column]) };
+		for (let pass = 0; pass < 4 && best.crossings > 0; pass++) {
+			for (let layer = maxLayer - 1; layer >= 0; layer--) sweep(layer, hopsOut, "to");
+			for (let layer = 1; layer <= maxLayer; layer++) sweep(layer, hopsIn, "from");
+			const crossings = countCrossings();
+			if (crossings < best.crossings) best = { crossings, columns: columns.map(column => [...column]) };
+		}
+		best.columns.forEach((column, layer) => { columns[layer] = column; reindex(column); });
+
+		// Stack ribbon ends by the position of the node on their other side, so ribbons
+		// sharing a node never cross each other at that node.
+		for (const outs of hopsOut.values()) {
+			outs.sort((a, b) => position.get(a.to)! - position.get(b.to)!);
+			outs.reduce((offset, hop) => (hop.fromOffset = offset) + hop.link.value * pixelsPerUnit, 0);
+		}
+		for (const ins of hopsIn.values()) {
+			ins.sort((a, b) => position.get(a.from)! - position.get(b.from)!);
+			ins.reduce((offset, hop) => (hop.toOffset = offset) + hop.link.value * pixelsPerUnit, 0);
 		}
 
-		// 3. Pre-compute link port offsets sorted by target/source vertical positions
-		const sourceLinkOffsets = new Map<SankeyLink, number>();
-		const targetLinkOffsets = new Map<SankeyLink, number>();
-		const sourceLinkHeights = new Map<SankeyLink, number>();
-		const targetLinkHeights = new Map<SankeyLink, number>();
-
-		// Outgoing links:
-		// 1. Sort by target layer ascending (links to earlier stages like Applied exit higher)
-		// 2. Secondary sort by target node y position ascending
-		for (const [nodeId, outLinks] of outgoingMap.entries()) {
-			const srcNode = nodeMap.get(nodeId);
-			if (!srcNode) continue;
-			outLinks.sort((a, b) => {
-				const tgtA = nodeMap.get(a.target);
-				const tgtB = nodeMap.get(b.target);
-				const layerA = tgtA ? tgtA.layer : 0;
-				const layerB = tgtB ? tgtB.layer : 0;
-				if (layerA !== layerB) {
-					return layerA - layerB; // Earlier stage exits higher
+		// Place each item where its incoming ribbons arrive flat, then push down to resolve
+		// collisions. Real nodes keep extra clearance for their labels; placeholders pack tighter.
+		const labelGap = Math.max(nodeGap, 42);
+		for (const column of columns) {
+			let previous: LayoutItem | null = null;
+			for (const item of column) {
+				const ins = hopsIn.get(item) || [];
+				const weight = ins.reduce((sum, hop) => sum + hop.link.value, 0);
+				const ideal = weight ? ins.reduce((sum, hop) => sum + (hop.from.y + hop.fromOffset - hop.toOffset) * hop.link.value, 0) / weight : paddingY;
+				const floor = previous ? previous.y + previous.height + (previous.node || item.node ? labelGap : 6) : paddingY;
+				item.y = Math.max(floor, ideal);
+				if (item.node) {
+					item.node.x = columnX(item.layer);
+					item.node.y = item.y;
 				}
-				const yA = tgtA ? tgtA.y : 0;
-				const yB = tgtB ? tgtB.y : 0;
-				if (yA !== yB) {
-					return yA - yB;
-				}
-				return a.target.localeCompare(b.target);
-			});
-			let sOffset = 0;
-			for (const link of outLinks) {
-				const h = link.value * pixelsPerUnit;
-				sourceLinkHeights.set(link, h);
-				sourceLinkOffsets.set(link, sOffset);
-				sOffset += h;
-			}
-		}
-
-		// Incoming links:
-		// 1. Sort by source layer descending (links from closer stages like Applied enter higher)
-		// 2. Secondary sort by source node y position ascending
-		for (const [nodeId, inLinks] of incomingMap.entries()) {
-			const tgtNode = nodeMap.get(nodeId);
-			if (!tgtNode) continue;
-			inLinks.sort((a, b) => {
-				const srcA = nodeMap.get(a.source);
-				const srcB = nodeMap.get(b.source);
-				const layerA = srcA ? srcA.layer : 0;
-				const layerB = srcB ? srcB.layer : 0;
-				if (layerA !== layerB) {
-					return layerB - layerA; // Closer stage enters higher
-				}
-				const yA = srcA ? srcA.y : 0;
-				const yB = srcB ? srcB.y : 0;
-				if (yA !== yB) {
-					return yA - yB;
-				}
-				return a.source.localeCompare(b.source);
-			});
-			let tOffset = 0;
-			for (const link of inLinks) {
-				const h = link.value * pixelsPerUnit;
-				targetLinkHeights.set(link, h);
-				targetLinkOffsets.set(link, tOffset);
-				tOffset += h;
+				previous = item;
 			}
 		}
 
 		// 4. Expand canvas height dynamically if needed to ensure zero clipping
-		let maxTotalHeight = baseHeight;
-		for (const n of nodeMap.values()) {
-			maxTotalHeight = Math.max(maxTotalHeight, n.y + n.height + paddingY);
+		for (const column of columns) {
+			for (const item of column) baseHeight = Math.max(baseHeight, item.y + item.height + paddingY);
 		}
-
-		baseHeight = maxTotalHeight;
 
 		// 5. Build SVG with Obsidian's createSvg helper
 		const svg = container.createSvg("svg", {
@@ -417,22 +422,26 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 			const targetNode = nodeMap.get(link.target);
 			if (!sourceNode || !targetNode) continue;
 
-			const sOffset = sourceLinkOffsets.get(link) || 0;
-			const tOffset = targetLinkOffsets.get(link) || 0;
-			const sourceLinkHeight = sourceLinkHeights.get(link) || 4;
-			const targetLinkHeight = targetLinkHeights.get(link) || 4;
-
-			const x0 = sourceNode.x + sourceNode.width;
-			const y0 = sourceNode.y + sOffset;
+			// Curve between columns and run straight across each placeholder column.
+			const thickness = link.value * pixelsPerUnit;
+			const chain = linkHops.get(link)!;
+			let topEdge = "";
+			const bottomEdge: string[] = [];
+			for (const [i, hop] of chain.entries()) {
+				const hx0 = columnX(hop.from.layer) + nodeWidth;
+				const hy0 = hop.from.y + hop.fromOffset;
+				const hx1 = columnX(hop.to.layer);
+				const hy1 = hop.to.y + hop.toOffset;
+				const cx0 = hx0 + (hx1 - hx0) * 0.45;
+				const cx1 = hx1 - (hx1 - hx0) * 0.45;
+				topEdge += `${i === 0 ? "M" : "L"} ${hx0} ${hy0} C ${cx0} ${hy0}, ${cx1} ${hy1}, ${hx1} ${hy1} `;
+				bottomEdge.unshift(`L ${hx1} ${hy1 + thickness} C ${cx1} ${hy1 + thickness}, ${cx0} ${hy0 + thickness}, ${hx0} ${hy0 + thickness}`);
+			}
+			const pathData = `${topEdge}${bottomEdge.join(" ")} Z`;
+			const x0 = columnX(sourceNode.layer) + nodeWidth;
+			const y0 = sourceNode.y + chain[0].fromOffset;
 			const x1 = targetNode.x;
-			const y1 = targetNode.y + tOffset;
-
-			const cx0 = x0 + (x1 - x0) * 0.45;
-			const cx1 = x1 - (x1 - x0) * 0.45;
-			const pathData = `M ${x0} ${y0}
-				C ${cx0} ${y0}, ${cx1} ${y1}, ${x1} ${y1}
-				L ${x1} ${y1 + targetLinkHeight}
-				C ${cx1} ${y1 + targetLinkHeight}, ${cx0} ${y0 + sourceLinkHeight}, ${x0} ${y0 + sourceLinkHeight} Z`;
+			const y1 = targetNode.y + chain[chain.length - 1].toOffset;
 
 			// Create linear gradient for link
 			const gradId = `sankey-grad-${crypto.randomUUID()}`;
