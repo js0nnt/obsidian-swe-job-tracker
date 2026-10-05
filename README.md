@@ -7,7 +7,22 @@ Applied → OA → Recruiter Screen → Round 1 → Round 2 → Round 3 → Fina
                                                               ↘ Rejected / Withdrawn / Ghosted
 ```
 
-To rewrite old statuses in the files themselves, run **SWE Job Tracker: Migrate legacy statuses** from the command palette.
+## Migrating old statuses
+
+Notes created with the original Job Application Tracker use older statuses. The plugin already reads them as the new ones, so nothing breaks, but you can rewrite the notes themselves:
+
+| Old status | Becomes |
+|---|---|
+| Wishlist | Applied |
+| Screening | OA |
+| Interviewing | Round 1 |
+
+1. Back up your vault or commit it to git, since this edits your notes.
+2. Open the command palette (`Ctrl/Cmd+P`).
+3. Run **SWE Job Tracker: Migrate legacy statuses (Screening → OA, Interviewing → Round 1)**.
+4. A notice shows how many notes were changed, or "No legacy statuses found."
+
+It updates both each note's current status and its status history, and it is safe to run again.
 
 ## Build and install
 
