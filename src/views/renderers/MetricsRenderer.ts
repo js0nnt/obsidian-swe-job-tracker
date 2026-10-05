@@ -3,6 +3,8 @@ import { DEFAULT_SANKEY_SETTINGS, SankeySettings } from "../../sankeySettings";
 import { getStatusClassName } from "../../constants";
 import { SankeyDiagram, SankeyLink } from "../SankeyDiagram";
 import { JobTrackerView } from "../JobTrackerView";
+import { SankeyFlowModal } from "../../modals/SankeyFlowModal";
+import { JobApplication } from "../../types";
 
 /**
  * Renderer for the Analytics & Metrics dashboard, including KPI cards, Sankey flow diagram,
@@ -273,6 +275,7 @@ export class MetricsRenderer {
 		};
 
 		const stageCounts = new Map<string, number>();
+		const flowApplications = new Map<string, JobApplication[]>();
 		// Count every visited stage, including applications without any transitions.
 		for (const app of this.view.applications) {
 			const visited = this.view.getVisitedStatuses(app)
@@ -290,6 +293,13 @@ export class MetricsRenderer {
 				const fromStage = visited[i];
 				const toStage = visited[i + 1];
 				addTransition(fromStage, toStage, 1);
+				const flowKey = `${fromStage}|||${toStage}`;
+				// A transition rejected as a cycle has no link, so it has no application list either.
+				if (transitionMap.has(flowKey)) {
+					const bucket = flowApplications.get(flowKey) || [];
+					bucket.push(app);
+					flowApplications.set(flowKey, bucket);
+				}
 			}
 		}
 
@@ -303,6 +313,9 @@ export class MetricsRenderer {
 			});
 		}
 
-		SankeyDiagram.render(container, sankeyLinks, this.view.applications.length, this.view.plugin.settings.sankey, stageCounts);
+		SankeyDiagram.render(container, sankeyLinks, this.view.applications.length, this.view.plugin.settings.sankey, stageCounts, (link) => {
+			const applications = flowApplications.get(`${link.source}|||${link.target}`) || [];
+			new SankeyFlowModal(this.view.app, link.source, link.target, applications, (path) => void this.view.openNote(path)).open();
+		});
 	}
 }

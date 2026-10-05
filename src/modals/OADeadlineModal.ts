@@ -1,8 +1,9 @@
-import { App, ButtonComponent, Setting, TFile } from "obsidian";
+import { App, ButtonComponent, Notice, Setting, TFile } from "obsidian";
 import JobApplicationTrackerPlugin from "../main";
 import { JobApplication, JobStatus } from "../types";
 import { addDays, formatLongDate, isEnteringOA, normalizeTime } from "../oaDeadline";
 import { BaseApplicationModal } from "./BaseApplicationModal";
+import { sanitizeUrl } from "../services/ApplicationService";
 
 type DeadlineMode = "relative" | "date";
 
@@ -29,6 +30,7 @@ export class OADeadlineModal extends BaseApplicationModal {
 	private days = DEFAULT_OA_DAYS;
 	private fixedDate: string;
 	private fixedTime: string;
+	private oaLink: string;
 
 	constructor(
 		app: App,
@@ -44,6 +46,7 @@ export class OADeadlineModal extends BaseApplicationModal {
 		this.emailDate = today;
 		this.fixedDate = application.oaDeadline || addDays(today, DEFAULT_OA_DAYS);
 		this.fixedTime = application.oaDeadlineTime || "";
+		this.oaLink = application.oaLink || "";
 		if (application.oaDeadline) this.mode = "date";
 	}
 
@@ -157,6 +160,16 @@ export class OADeadlineModal extends BaseApplicationModal {
 		previewEl = contentEl.createDiv({ cls: "job-tracker-oa-deadline-preview" });
 		updatePreview();
 
+		new Setting(contentEl)
+			.setName("OA link (optional)")
+			.setDesc("Where to take the assessment, e.g. the HackerRank or CodeSignal invite. Must start with http:// or https://")
+			.addText((text) => {
+				text.inputEl.type = "url";
+				text.setPlaceholder("https://").setValue(this.oaLink).onChange((value) => {
+					this.oaLink = value;
+				});
+			});
+
 		let saveBtn: ButtonComponent;
 		const buttons = new Setting(contentEl).addButton((btn) => {
 			saveBtn = btn;
@@ -166,6 +179,10 @@ export class OADeadlineModal extends BaseApplicationModal {
 				.onClick(async () => {
 					const deadline = this.computeDeadline();
 					if (!deadline.date) return;
+					if (this.oaLink.trim() && !sanitizeUrl(this.oaLink)) {
+						new Notice("The OA link must start with http:// or https://");
+						return;
+					}
 					saveBtn.setDisabled(true);
 					await this.submit(deadline, saveBtn);
 				});
@@ -192,11 +209,13 @@ export class OADeadlineModal extends BaseApplicationModal {
 				return;
 			}
 			if (this.targetStatus) {
-				await this.plugin.appService.updateStatus(file, this.targetStatus, this.note, deadline.date ? deadline : undefined);
+				const link = sanitizeUrl(this.oaLink);
+				await this.plugin.appService.updateStatus(file, this.targetStatus, this.note, deadline.date || link ? { ...deadline, link } : undefined);
 			} else {
 				await this.plugin.appService.updateApplicationFields(file, {
 					oaDeadline: deadline.date,
 					oaDeadlineTime: deadline.date ? deadline.time || "" : "",
+					oaLink: this.oaLink,
 				});
 			}
 			this.isCompleted = true;

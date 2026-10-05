@@ -124,8 +124,9 @@ export function formatDisplayLabel(rawLabel: string, value: number, maxChars = 2
 /**
  * Renders a complete interactive Sankey SVG into the provided container.
  */
-export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[], totalApps: number, preferences?: Partial<SankeySettings>, stageCounts: ReadonlyMap<string, number> = new Map()): void {
+export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[], totalApps: number, preferences?: Partial<SankeySettings>, stageCounts: ReadonlyMap<string, number> = new Map(), onLinkClick?: (link: SankeyLink) => void): void {
 		const options = normalizeSankeySettings(preferences);
+		const cleanLabel = (id: string): string => (id.includes(": ") ? id.split(": ").pop()! : id);
 		container.classList.toggle("has-grid", options.showGrid);
 		const displayLabel = (label: string, value: number): string => {
 			const name = formatDisplayLabel(label, value).replace(/ \(\d+\)$/, "");
@@ -587,6 +588,7 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 
 		const resetFocus = () => {
 			if (!isFocused) return;
+			hideTooltip();
 			isFocused = false;
 			for (const r of allRibbonEls) {
 				r.el.classList.remove("is-dimmed", "is-highlighted");
@@ -647,6 +649,45 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 				}
 			}
 		};
+
+		// Hover shows how many applications moved through a flow; clicking it opens the list.
+		const tooltip = container.createEl("div", { cls: "job-tracker-sankey-tooltip", attr: { role: "tooltip" } });
+		const hideTooltip = () => tooltip.classList.remove("is-visible");
+		const showTooltip = (link: SankeyLink, e: PointerEvent) => {
+			const plural = link.value === 1 ? "" : "s";
+			tooltip.textContent = (`${cleanLabel(link.source)} → ${cleanLabel(link.target)}: ${link.value} application${plural}${onLinkClick ? " · click to view" : ""}`);
+			tooltip.classList.add("is-visible");
+			const box = container.getBoundingClientRect();
+			const left = Math.min(e.clientX - box.left + 14, Math.max(0, box.width - tooltip.offsetWidth - 8));
+			const top = Math.min(e.clientY - box.top + 14, Math.max(0, box.height - tooltip.offsetHeight - 8));
+			tooltip.style.left = `${left}px`;
+			tooltip.style.top = `${top}px`;
+		};
+		let pressed: { link: SankeyLink; x: number; y: number } | null = null;
+		if (onLinkClick) {
+			// The viewport captures the pointer for panning, so a click is detected as a press and release without movement.
+			svg.addEventListener("pointerup", (e) => {
+				const start = pressed;
+				pressed = null;
+				if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) onLinkClick(start.link);
+			}, { signal });
+			svg.addEventListener("pointercancel", () => { pressed = null; }, { signal });
+		}
+		for (const r of allRibbonEls) {
+			r.el.addEventListener("pointermove", (e) => showTooltip(r.link, e), { signal });
+			r.el.addEventListener("pointerleave", hideTooltip, { signal });
+			if (!onLinkClick) continue;
+			r.el.classList.add("is-clickable");
+			r.el.setAttribute("role", "button");
+			r.el.addEventListener("pointerdown", (e) => {
+				if (e.button === 0) pressed = { link: r.link, x: e.clientX, y: e.clientY };
+			}, { signal });
+			r.el.addEventListener("keydown", (e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				onLinkClick(r.link);
+			}, { signal });
+		}
 
 		// Attach focus event listeners without DOM mutations
 		for (const r of allRibbonEls) {

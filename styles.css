@@ -932,6 +932,45 @@
 	transition: opacity 0.2s ease, filter 0.2s ease;
 }
 
+.job-tracker-sankey-ribbon.is-clickable { cursor: pointer; }
+.job-tracker-sankey-tooltip {
+	position: absolute;
+	z-index: 5;
+	pointer-events: none;
+	display: none;
+	padding: 4px 8px;
+	border-radius: 6px;
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	color: var(--text-normal);
+	font-size: 0.85em;
+	white-space: nowrap;
+	box-shadow: var(--shadow-s);
+}
+.job-tracker-sankey-tooltip.is-visible { display: block; }
+.job-tracker-flow-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	max-height: 60vh;
+	overflow-y: auto;
+}
+.job-tracker-flow-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 10px;
+	border-radius: 6px;
+	cursor: pointer;
+	background: var(--background-secondary);
+}
+.job-tracker-flow-row:hover,
+.job-tracker-flow-row:focus-visible { background: var(--background-modifier-hover); }
+.job-tracker-flow-info { display: flex; flex-direction: column; min-width: 0; }
+.job-tracker-flow-company { font-weight: 600; }
+.job-tracker-flow-role,
+.job-tracker-flow-date { color: var(--text-muted); font-size: 0.85em; }
 .job-tracker-sankey-ribbon:hover {
 	filter: brightness(1.2);
 }
@@ -1269,6 +1308,13 @@
 .job-tracker-oa-tracker-role {
 	color: var(--text-muted);
 	font-size: 0.85em;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.job-tracker-oa-tracker-link {
+	font-size: 0.85em;
+	display: block;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;

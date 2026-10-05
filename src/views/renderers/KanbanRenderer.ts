@@ -333,6 +333,15 @@ export class KanbanRenderer {
 				}
 			};
 			info.createSpan({ text: app.role, cls: "job-tracker-oa-tracker-role" });
+			if (app.oaLink) {
+				const link = info.createEl("a", {
+					text: "Open assessment",
+					cls: "job-tracker-oa-tracker-link",
+					href: app.oaLink,
+					attr: { title: app.oaLink, target: "_blank", rel: "noopener noreferrer" },
+				});
+				link.onclick = (e) => e.stopPropagation();
+			}
 
 			row.createSpan({
 				text: app.oaDeadline ? formatLongDate(app.oaDeadline, app.oaDeadlineTime) : "No deadline",

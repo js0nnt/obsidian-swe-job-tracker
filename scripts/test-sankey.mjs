@@ -38,7 +38,7 @@ class Element {
 async function loadModule(path) {
 	const { outputFiles } = await build({ entryPoints: [path], bundle: true, write: false, platform: "node", format: "cjs", external: ["obsidian"] });
 	const module = { exports: {} };
-	runInNewContext(outputFiles[0].text, { module, exports: module.exports, crypto: webcrypto, AbortController, DOMPoint: class { constructor(x,y) { this.x=x; this.y=y; } matrixTransform(m) { return { x:this.x*m.a, y:this.y*m.d }; } }, require: () => ({}) });
+	runInNewContext(outputFiles[0].text, { module, exports: module.exports, crypto: webcrypto, AbortController, DOMPoint: class { constructor(x,y) { this.x=x; this.y=y; } matrixTransform(m) { return { x:this.x*m.a, y:this.y*m.d }; } }, require: () => ({ Modal: class {} }) });
 	return module.exports;
 }
 

@@ -97,6 +97,7 @@ export class ApplicationService {
 		if (fields.followUpDate !== undefined) fm.followUpDate = fields.followUpDate;
 		if (fields.oaDeadline !== undefined) fm.oaDeadline = fields.oaDeadline;
 		if (fields.oaDeadlineTime !== undefined) fm.oaDeadlineTime = fields.oaDeadlineTime;
+		if (fields.oaLink !== undefined) fm.oaLink = sanitizeUrl(fields.oaLink);
 		if (fields.dateApplied !== undefined) fm.dateApplied = fields.dateApplied;
 		if (fields.jobDescriptionFile !== undefined) fm.jobDescriptionFile = fields.jobDescriptionFile;
 		if (fields.contacts !== undefined) fm.contacts = fields.contacts;
@@ -586,6 +587,7 @@ export class ApplicationService {
 			followUpDate: typeof rawFrontmatter.followUpDate === "string" ? rawFrontmatter.followUpDate : undefined,
 			oaDeadline: typeof rawFrontmatter.oaDeadline === "string" && rawFrontmatter.oaDeadline ? rawFrontmatter.oaDeadline : undefined,
 			oaDeadlineTime: normalizeTime(rawFrontmatter.oaDeadlineTime) || undefined,
+			oaLink: typeof rawFrontmatter.oaLink === "string" ? sanitizeUrl(rawFrontmatter.oaLink) || undefined : undefined,
 			jobDescriptionFile: typeof rawFrontmatter.jobDescriptionFile === "string" ? rawFrontmatter.jobDescriptionFile : "",
 			contacts,
 			interviews,
@@ -657,7 +659,7 @@ export class ApplicationService {
 		file: TFile,
 		newStatus: JobStatus,
 		note?: string,
-		oaDeadline?: { date: string; time?: string },
+		oaDeadline?: { date: string; time?: string; link?: string },
 		autoGhost = false
 	): Promise<void> {
 		return await this.runWithFileLock(file, async () => {
@@ -675,8 +677,11 @@ export class ApplicationService {
 					fm.status = newStatus;
 					fm.lastUpdated = today;
 					if (oaDeadline) {
-						fm.oaDeadline = oaDeadline.date;
-						fm.oaDeadlineTime = oaDeadline.time || "";
+						if (oaDeadline.date) {
+							fm.oaDeadline = oaDeadline.date;
+							fm.oaDeadlineTime = oaDeadline.time || "";
+						}
+						if (oaDeadline.link !== undefined) fm.oaLink = sanitizeUrl(oaDeadline.link);
 					}
 
 					if (!Array.isArray(fm.statusHistory)) {
