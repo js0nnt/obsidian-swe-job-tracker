@@ -497,8 +497,8 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 
 			const cleanSource = link.source.includes(": ") ? link.source.split(": ").pop()! : link.source;
 			const cleanTarget = link.target.includes(": ") ? link.target.split(": ").pop()! : link.target;
-			const linkTitle = path.createSvg("title");
-			linkTitle.textContent = `${cleanSource} → ${cleanTarget}: ${link.value} application${link.value === 1 ? "" : "s"}`;
+			// No native <title>: it would pop a second, overlapping browser tooltip over the custom one.
+			path.setAttribute("aria-label", `${cleanSource} → ${cleanTarget}: ${link.value} application${link.value === 1 ? "" : "s"}`);
 
 			allRibbonEls.push({ el: path, link });
 		}
@@ -655,7 +655,9 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 		const hideTooltip = () => tooltip.classList.remove("is-visible");
 		const showTooltip = (link: SankeyLink, e: PointerEvent) => {
 			const plural = link.value === 1 ? "" : "s";
-			tooltip.textContent = (`${cleanLabel(link.source)} → ${cleanLabel(link.target)}: ${link.value} application${plural}${onLinkClick ? " · click to view" : ""}`);
+			tooltip.empty();
+			tooltip.createEl("strong", { text: `${cleanLabel(link.source)} → ${cleanLabel(link.target)}` });
+			tooltip.createEl("span", { text: `${link.value} application${plural}${onLinkClick ? " · click to view" : ""}` });
 			tooltip.classList.add("is-visible");
 			const box = container.getBoundingClientRect();
 			const left = Math.min(e.clientX - box.left + 14, Math.max(0, box.width - tooltip.offsetWidth - 8));
@@ -692,7 +694,6 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 		// Attach focus event listeners without DOM mutations
 		for (const r of allRibbonEls) {
 			r.el.setAttribute("tabindex", "0");
-			r.el.setAttribute("aria-label", r.el.querySelector("title")?.textContent || "Application flow");
 			r.el.addEventListener("focus", () => focusRibbon(r), { signal });
 			r.el.addEventListener("blur", resetFocus, { signal });
 			r.el.addEventListener(

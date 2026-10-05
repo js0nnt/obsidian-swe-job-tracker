@@ -1,8 +1,8 @@
 import { setIcon, TFile } from "obsidian";
 import { JobApplication } from "../../types";
 import { getStatusClassName } from "../../constants";
-import { getStageCategory } from "../../stages";
-import { compareByOADeadline, describeDeadline, formatLongDate } from "../../oaDeadline";
+import { getStageCategory, reachedInterview } from "../../stages";
+import { compareByOADeadline, describeDeadline, formatLocalDate, formatLongDate, formatTime, normalizeTime } from "../../oaDeadline";
 import { NewApplicationModal } from "../../modals/NewApplicationModal";
 import { moveApplicationToStatus, OADeadlineModal } from "../../modals/OADeadlineModal";
 import { UpdateStatusModal } from "../../modals/UpdateStatusModal";
@@ -25,8 +25,12 @@ export class KanbanRenderer {
 	 * Renders the Kanban board with drag-and-drop columns for each status.
 	 */
 	render(container: HTMLElement, apps: JobApplication[]) {
+		this.renderOADeadlineTracker(container, apps);
+
 		const board = container.createDiv({ cls: "job-tracker-kanban-board" });
 		const statuses = this.view.plugin.settings.statuses;
+		// Statuses split evenly across two rows (first half on top) so the board never scrolls sideways.
+		board.style.setProperty("--kanban-columns", String(Math.max(1, Math.ceil(statuses.length / 2))));
 
 		for (const status of statuses) {
 			const colApps = apps.filter((a) => a.status === status);
@@ -104,8 +108,6 @@ export class KanbanRenderer {
 				}
 			}
 		}
-
-		this.renderOADeadlineTracker(container, apps);
 
 		if (this.focusedCardPath) {
 			const targetCard = board.querySelector<HTMLElement>(`[data-file-path="${CSS.escape(this.focusedCardPath)}"]`);
@@ -288,7 +290,7 @@ export class KanbanRenderer {
 	}
 
 	/**
-	 * List below the board of every application currently in an OA stage, closest deadline first.
+	 * List above the board of every application currently in an OA stage, closest deadline first.
 	 */
 	private renderOADeadlineTracker(container: HTMLElement, apps: JobApplication[]) {
 		const oaApps = apps.filter((a) => getStageCategory(a.status) === "oa").sort(compareByOADeadline);
@@ -311,7 +313,11 @@ export class KanbanRenderer {
 			return;
 		}
 
-		const list = tracker.createDiv({ cls: "job-tracker-oa-tracker-list" });
+		const body = tracker.createDiv({ cls: "job-tracker-oa-tracker-body" });
+		const list = body.createDiv({ cls: "job-tracker-oa-tracker-list" });
+		const aside = body.createDiv({ cls: "job-tracker-oa-aside" });
+		this.renderOAStatistics(aside, oaApps.length);
+		this.renderOACalendar(aside, oaApps, tracker);
 		for (const app of oaApps) {
 			const row = list.createDiv({ cls: "job-tracker-oa-tracker-row" });
 			this.renderOADeadlineBadge(row, app);
@@ -364,6 +370,122 @@ export class KanbanRenderer {
 				}
 			};
 		}
+	}
+
+	/** Online assessment statistics across every application, not just the ones currently in OA. */
+	private renderOAStatistics(container: HTMLElement, pendingCount: number) {
+		const box = container.createDiv({ cls: "job-tracker-oa-summary", attr: { role: "group", "aria-label": "OA statistics" } });
+		const apps = this.view.applications;
+		let received = 0;
+		let advanced = 0;
+		let rejectedAtOA = 0;
+		const waits: number[] = [];
+		for (const app of apps) {
+			const path = this.view.getVisitedStatuses(app);
+			const oaIndex = path.findIndex((st) => getStageCategory(st) === "oa");
+			if (oaIndex === -1) continue;
+			received++;
+			const after = path.slice(oaIndex + 1);
+			if (after.some(reachedInterview)) advanced++;
+			else if (after.length > 0 && getStageCategory(after[0]) === "rejected") rejectedAtOA++;
+			const entry = (app.statusHistory || []).find((h) => getStageCategory(h.status) === "oa");
+			const days = entry && app.dateApplied ? (Date.parse(entry.date) - Date.parse(app.dateApplied)) / 86400000 : NaN;
+			if (Number.isFinite(days) && days >= 0) waits.push(days);
+		}
+		const percent = (n: number, of: number) => (of > 0 ? `${Math.round((n / of) * 100)}%` : "–");
+		const average = waits.length ? `${Math.round(waits.reduce((sum, d) => sum + d, 0) / waits.length)} days` : "–";
+
+		box.createEl("h5", { text: "OA statistics" });
+		const rows: [string, string][] = [
+			["OAs received", `${received} (${percent(received, apps.length)} of applications)`],
+			["Waiting to take", String(pendingCount)],
+			["Moved to interviews", `${advanced} (${percent(advanced, received)})`],
+			["Rejected after OA", `${rejectedAtOA} (${percent(rejectedAtOA, received)})`],
+			["Avg. days to receive OA", average],
+		];
+		for (const [label, value] of rows) {
+			const row = box.createDiv({ cls: "job-tracker-oa-summary-row" });
+			row.createSpan({ text: label });
+			row.createSpan({ text: value, cls: "job-tracker-oa-summary-count" });
+		}
+	}
+
+	/** Month grid beside the OA list; days with a deadline get a dot colored by urgency. */
+	private renderOACalendar(container: HTMLElement, oaApps: JobApplication[], tracker: HTMLElement) {
+		const byDay = new Map<string, JobApplication[]>();
+		for (const app of oaApps) {
+			if (!app.oaDeadline) continue;
+			const day = app.oaDeadline.slice(0, 10);
+			byDay.set(day, [...(byDay.get(day) || []), app]);
+		}
+
+		const calendar = container.createDiv({ cls: "job-tracker-oa-cal", attr: { role: "group", "aria-label": "OA deadline calendar" } });
+		const popover = tracker.createDiv({ cls: "job-tracker-oa-popover", attr: { role: "tooltip" } });
+		const hidePopover = () => popover.removeClass("is-visible");
+		const showPopover = (cell: HTMLElement, due: JobApplication[]) => {
+			popover.empty();
+			for (const app of due) {
+				const entry = popover.createDiv({ cls: "job-tracker-oa-popover-entry" });
+				entry.createEl("strong", { text: app.company });
+				entry.createDiv({ text: app.role, cls: "job-tracker-oa-popover-role" });
+				entry.createDiv({ text: `${formatLongDate(app.oaDeadline!, app.oaDeadlineTime)} · ${describeDeadline(app.oaDeadline!, app.oaDeadlineTime).label}` });
+				if (app.oaLink) entry.createDiv({ text: "Assessment link saved", cls: "job-tracker-oa-popover-role" });
+			}
+			popover.addClass("is-visible");
+			const box = tracker.getBoundingClientRect();
+			const rect = cell.getBoundingClientRect();
+			const left = Math.max(8, Math.min(rect.right - box.left - popover.offsetWidth, box.width - popover.offsetWidth - 8));
+			popover.style.left = `${left}px`;
+			popover.style.top = `${rect.bottom - box.top + 6}px`;
+		};
+		const now = new Date();
+		const todayKey = formatLocalDate(now);
+		// Open on the month of the nearest upcoming deadline so there is something to see.
+		const upcoming = [...byDay.keys()].sort().find((day) => day >= todayKey) || [...byDay.keys()].sort()[0];
+		const start = upcoming ? new Date(Number(upcoming.slice(0, 4)), Number(upcoming.slice(5, 7)) - 1, 1) : new Date(now.getFullYear(), now.getMonth(), 1);
+		let year = start.getFullYear();
+		let month = start.getMonth();
+
+		const draw = () => {
+			calendar.empty();
+			const header = calendar.createDiv({ cls: "job-tracker-oa-cal-header" });
+			const step = (delta: number, label: string, icon: string) => {
+				const btn = header.createEl("button", { cls: "job-tracker-oa-cal-nav", attr: { type: "button", "aria-label": label } });
+				setIcon(btn, icon);
+				btn.onclick = () => {
+					const moved = new Date(year, month + delta, 1);
+					year = moved.getFullYear();
+					month = moved.getMonth();
+					draw();
+				};
+				return btn;
+			};
+			step(-1, "Previous month", "chevron-left");
+			header.createSpan({ text: new Date(year, month, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }), cls: "job-tracker-oa-cal-title" });
+			step(1, "Next month", "chevron-right");
+
+			const grid = calendar.createDiv({ cls: "job-tracker-oa-cal-grid" });
+			for (const letter of ["S", "M", "T", "W", "T", "F", "S"]) grid.createSpan({ text: letter, cls: "job-tracker-oa-cal-weekday" });
+			for (let i = 0; i < new Date(year, month, 1).getDay(); i++) grid.createSpan();
+
+			for (let day = 1; day <= new Date(year, month + 1, 0).getDate(); day++) {
+				const key = formatLocalDate(new Date(year, month, day));
+				const due = byDay.get(key) || [];
+				const cell = grid.createSpan({ text: String(day), cls: "job-tracker-oa-cal-day" });
+				if (key === todayKey) cell.addClass("is-today");
+				if (due.length === 0) continue;
+				const first = due[0];
+				cell.addClass("has-oa", `is-${describeDeadline(first.oaDeadline!, first.oaDeadlineTime).urgency}`);
+				const summary = due.map((a) => `${a.company}${normalizeTime(a.oaDeadlineTime) ? ` at ${formatTime(a.oaDeadlineTime!)}` : ""}`).join(", ");
+				cell.setAttribute("tabindex", "0");
+				cell.setAttribute("aria-label", `${key}: OA due for ${summary}`);
+				cell.addEventListener("mouseenter", () => showPopover(cell, due));
+				cell.addEventListener("focus", () => showPopover(cell, due));
+				cell.addEventListener("mouseleave", hidePopover);
+				cell.addEventListener("blur", hidePopover);
+			}
+		};
+		draw();
 	}
 
 	/** Countdown badge for an OA application; clicking it edits the deadline. */

@@ -11,7 +11,7 @@ import JobApplicationTrackerPlugin from "../main";
 import { JobApplication, JobSortField } from "../types";
 import { sanitizeUrl } from "../services/ApplicationService";
 import { VIEW_TYPE_JOB_TRACKER } from "../constants";
-import { getStageCategory, isInterviewStage, isResponseStage, isTerminalStatus, reachedInterview, reachedOffer } from "../stages";
+import { getStageCategory, getStageRank, isInterviewStage, isResponseStage, isTerminalStatus, reachedInterview, reachedOffer } from "../stages";
 import { NewApplicationModal } from "../modals/NewApplicationModal";
 import { UpdateStatusModal } from "../modals/UpdateStatusModal";
 import { AddContactModal } from "../modals/AddContactModal";
@@ -531,12 +531,10 @@ export class JobTrackerView extends ItemView {
 			rawVisited.push(app.status);
 		}
 
-		// A Ghosted stage is only real while it is the current status; once the company
-		// responds and the card moves on, the ghost is reverted from the path.
-		if (getStageCategory(app.status) !== "ghosted") {
-			for (let i = rawVisited.length - 1; i >= 0; i--) {
-				if (getStageCategory(rawVisited[i]) === "ghosted") rawVisited.splice(i, 1);
-			}
+		// A terminal status (Rejected, Ghosted, ...) is only real while it is the current status.
+		// If the company comes back and the card moves on, that outcome is reverted from the path.
+		for (let i = rawVisited.length - 2; i >= 0; i--) {
+			if (isTerminalStatus(rawVisited[i])) rawVisited.splice(i, 1);
 		}
 
 		// 3. Every application starts at "Applied"
@@ -544,15 +542,19 @@ export class JobTrackerView extends ItemView {
 			rawVisited.unshift("Applied");
 		}
 
-		// 4. Eliminate cycles / loops
+		// 4. Eliminate cycles / loops, and reset any later stages when the card moves back
+		// to an earlier one (e.g. Round 1 -> OA means the Round 1 step has not happened yet).
 		const visited: string[] = [];
 		for (const st of rawVisited) {
 			const existingIdx = visited.indexOf(st);
 			if (existingIdx !== -1) {
 				visited.length = existingIdx + 1;
-			} else {
-				visited.push(st);
+				continue;
 			}
+			if (!isTerminalStatus(st)) {
+				while (visited.length > 0 && getStageRank(visited[visited.length - 1]) > getStageRank(st)) visited.pop();
+			}
+			visited.push(st);
 		}
 
 		// 5. Enforce single terminal status at the end
