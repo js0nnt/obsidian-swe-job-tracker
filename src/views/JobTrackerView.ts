@@ -531,6 +531,14 @@ export class JobTrackerView extends ItemView {
 			rawVisited.push(app.status);
 		}
 
+		// A Ghosted stage is only real while it is the current status; once the company
+		// responds and the card moves on, the ghost is reverted from the path.
+		if (getStageCategory(app.status) !== "ghosted") {
+			for (let i = rawVisited.length - 1; i >= 0; i--) {
+				if (getStageCategory(rawVisited[i]) === "ghosted") rawVisited.splice(i, 1);
+			}
+		}
+
 		// 3. Every application starts at "Applied"
 		if (!rawVisited.some((st) => getStageCategory(st) === "applied")) {
 			rawVisited.unshift("Applied");

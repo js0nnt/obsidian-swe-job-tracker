@@ -271,7 +271,19 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 		const layerXStep = maxLayer > 0 ? usableWidth / maxLayer : usableWidth;
 
 		// One shared scale keeps every application's ribbon equally thick across stages.
-		const pixelsPerUnit = Math.min(24, usableHeight / Math.max(totalApps, 1));
+		// A root node (e.g. Applied) keeps its full bar, but the part for applications still waiting
+		// (no outcome yet) is compressed so it cannot dwarf the outcome ribbons. Its label keeps the full count.
+		const WAITING_SHARE = 0.6;
+		const rootOutSum = (id: string): number =>
+			(incomingMap.get(id) || []).length ? 0 : (outgoingMap.get(id) || []).reduce((sum, link) => sum + link.value, 0);
+		const heightUnits = (id: string): number => {
+			const value = nodeMap.get(id)!.value;
+			const outSum = rootOutSum(id);
+			if (outSum === 0) return value;
+			return outSum + Math.min(Math.max(value - outSum, 0), outSum * WAITING_SHARE);
+		};
+		const tallest = Math.max(1, ...Array.from(nodeMap.keys(), heightUnits));
+		const pixelsPerUnit = Math.min(24, usableHeight / tallest);
 		const nodeWidth = options.spacing === "compact" ? 12 : 18;
 		const columnX = (layer: number) => maxLayer === 0 ? (baseWidth - nodeWidth) / 2 : paddingLeft + layer * layerXStep;
 
@@ -280,7 +292,7 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 		const columns: LayoutItem[][] = Array.from({ length: maxLayer + 1 }, () => []);
 		const itemById = new Map<string, LayoutItem>();
 		for (const node of nodeMap.values()) {
-			node.height = node.value * pixelsPerUnit;
+			node.height = heightUnits(node.id) * pixelsPerUnit;
 			const item: LayoutItem = { node, layer: node.layer, value: node.value, height: node.height, rank: getStageRank(node.id), key: node.id, y: 0 };
 			itemById.set(node.id, item);
 			columns[node.layer].push(item);
@@ -517,6 +529,28 @@ export function renderSankeyDiagram(container: HTMLElement, links: SankeyLink[],
 					"stroke-width": "1",
 				},
 			});
+
+			// The compressed "still waiting" part of a root bar is shaded and labelled so it reads as pending.
+			const outSum = rootOutSum(node.id);
+			const waiting = outSum > 0 ? node.value - outSum : 0;
+			const usedHeight = outSum * pixelsPerUnit;
+			if (waiting > 0 && node.height > usedHeight) {
+				g.createSvg("rect", {
+					attr: {
+						x: `${node.x}`, y: `${node.y + usedHeight}`,
+						width: `${node.width}`, height: `${node.height - usedHeight}`,
+						fill: "var(--background-primary, #1e1e1e)", "fill-opacity": "0.55",
+						stroke: "var(--text-faint, #888)", "stroke-dasharray": "3 2", "stroke-width": "1",
+					},
+				});
+				const waitText = g.createSvg("text", {
+					attr: {
+						x: `${node.x + node.width + 8}`, y: `${node.y + usedHeight + (node.height - usedHeight) / 2 + 4}`,
+						"font-size": "11px", fill: "var(--text-muted, #999)", "text-anchor": "start",
+					},
+				});
+				waitText.textContent = `${waiting} waiting`;
+			}
 
 			// Text Label
 			const labelX = String(node.layer === 0 ? node.x - 10 : node.x + node.width + 10);
