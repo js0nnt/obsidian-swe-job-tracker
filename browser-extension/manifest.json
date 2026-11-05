@@ -1,0 +1,19 @@
+{
+	"manifest_version": 3,
+	"name": "SWE Job Tracker Clipper",
+	"version": "0.1.0",
+	"description": "Detects job postings and pre-fills the SWE Job Tracker \"Add application\" form in Obsidian.",
+	"action": {
+		"default_title": "Send this job to SWE Job Tracker"
+	},
+	"background": {
+		"service_worker": "background.js"
+	},
+	"content_scripts": [
+		{
+			"matches": ["http://*/*", "https://*/*"],
+			"js": ["content.js"],
+			"run_at": "document_idle"
+		}
+	]
+}

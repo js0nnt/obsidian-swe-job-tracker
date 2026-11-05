@@ -35,3 +35,16 @@ npm run install-plugin -- "C:/path/to/vault"
 Then enable **SWE Job Tracker** under Settings → Community plugins. Disable the original Job Application Tracker so you don't have two ribbon icons. Both plugins read the same notes, so nothing is lost.
 
 For development, `npm run dev` watches and rebuilds `main.js`.
+
+## Browser extension (clip jobs from Chrome)
+
+`browser-extension/` is a Chrome extension that detects job postings and pre-fills the **Add New Job Application** form in Obsidian. It never saves anything itself: you review the fields in Obsidian and click **Create Application**.
+
+1. Build and install the plugin (above) so Obsidian knows the `obsidian://swe-job-tracker-add` link.
+2. In Chrome, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick the `browser-extension` folder.
+3. Open a job posting. A card in the top-right asks **Parse this job into Obsidian?** Click **Parse**.
+4. The first time, Chrome asks to open Obsidian. Tick **Always allow** so it doesn't ask again.
+
+It fills company, role, location, employment type, salary, job URL, and the job description. Pages that include schema.org `JobPosting` data (Greenhouse, Lever, Ashby, Workday, and many company career sites) parse best. LinkedIn and Indeed use page scrapers, which can break when those sites change their markup.
+
+If the card doesn't appear, click the extension's toolbar icon to parse the page anyway (it falls back to the page's heading). Obsidian opens the link in the vault you last used, so that vault needs the plugin enabled.

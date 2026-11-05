@@ -1,10 +1,10 @@
 import { Notice, Plugin, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
-import { JobApplicationTrackerSettings, JobApplication } from "./types";
-import { DEFAULT_SETTINGS, VIEW_TYPE_JOB_TRACKER } from "./constants";
+import { JobApplicationTrackerSettings, JobApplication, EmploymentType } from "./types";
+import { DEFAULT_SETTINGS, EMPLOYMENT_OPTIONS, VIEW_TYPE_JOB_TRACKER } from "./constants";
 import { normalizeSankeySettings } from "./sankeySettings";
 import { ApplicationService } from "./services/ApplicationService";
 import { JobApplicationTrackerSettingTab } from "./settings/SettingsTab";
-import { NewApplicationModal } from "./modals/NewApplicationModal";
+import { NewApplicationModal, NewApplicationPrefill } from "./modals/NewApplicationModal";
 import { UpdateStatusModal, SelectApplicationModal } from "./modals/UpdateStatusModal";
 import { AddContactModal } from "./modals/AddContactModal";
 import { AddInterviewModal } from "./modals/AddInterviewModal";
@@ -90,6 +90,26 @@ export default class JobApplicationTrackerPlugin extends Plugin {
 			callback: () => {
 				new NewApplicationModal(this.app, this).open();
 			},
+		});
+
+		// URI: obsidian://swe-job-tracker-add?company=...&role=... opens a pre-filled Add modal.
+		// Used by the browser extension; nothing is saved until the user submits the modal.
+		this.registerObsidianProtocolHandler("swe-job-tracker-add", (params) => {
+			const field = (key: string, max: number) => (params[key] ?? "").trim().slice(0, max);
+			const employmentType = field("employmentType", 20);
+			const prefill: NewApplicationPrefill = {
+				company: field("company", 100),
+				role: field("role", 150),
+				location: field("location", 150),
+				employmentType: EMPLOYMENT_OPTIONS.includes(employmentType as EmploymentType)
+					? (employmentType as EmploymentType)
+					: undefined,
+				salary: field("salary", 100),
+				jobUrl: field("jobUrl", 500),
+				notes: field("notes", 2000),
+				jobDescription: field("jobDescription", 10000),
+			};
+			new NewApplicationModal(this.app, this, prefill).open();
 		});
 
 		// Command: Edit application details & attachments

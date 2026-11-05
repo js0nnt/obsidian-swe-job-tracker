@@ -4,6 +4,18 @@ import { Contact, EmploymentType, JobStatus } from "../types";
 import { sanitizeEmail, sanitizeUrl } from "../services/ApplicationService";
 import { EMPLOYMENT_OPTIONS } from "../constants";
 
+/** Field values used to pre-fill the modal, e.g. from the browser extension's obsidian:// link. */
+export interface NewApplicationPrefill {
+	company?: string;
+	role?: string;
+	location?: string;
+	employmentType?: EmploymentType;
+	salary?: string;
+	jobUrl?: string;
+	notes?: string;
+	jobDescription?: string;
+}
+
 /**
  * Modal for creating a new job application note with details and optional JD attachments.
  */
@@ -21,15 +33,24 @@ export class NewApplicationModal extends Modal {
 	private notes = "";
 	private recruiterName = "";
 	private recruiterEmail = "";
+	private jobDescription = "";
 
 	private companyInputEl: HTMLInputElement | null = null;
 	private roleInputEl: HTMLInputElement | null = null;
 
-	constructor(app: App, plugin: JobApplicationTrackerPlugin) {
+	constructor(app: App, plugin: JobApplicationTrackerPlugin, prefill: NewApplicationPrefill = {}) {
 		super(app);
 		this.plugin = plugin;
 		this.status = plugin.settings.defaultStatus || "Applied";
 		this.dateApplied = plugin.appService.getTodayDateString();
+		this.company = prefill.company ?? "";
+		this.role = prefill.role ?? "";
+		this.location = prefill.location ?? "";
+		this.employmentType = prefill.employmentType ?? "";
+		this.salary = prefill.salary ?? "";
+		this.jobUrl = prefill.jobUrl ?? "";
+		this.notes = prefill.notes ?? "";
+		this.jobDescription = prefill.jobDescription ?? "";
 	}
 
 	onOpen(): void {
@@ -46,7 +67,7 @@ export class NewApplicationModal extends Modal {
 			.addText((text) => {
 				this.companyInputEl = text.inputEl;
 				text.inputEl.maxLength = 100;
-				text.setPlaceholder("e.g. Acme Corp").onChange((value) => {
+				text.setValue(this.company).setPlaceholder("e.g. Acme Corp").onChange((value) => {
 					this.company = value;
 				});
 				text.inputEl.focus();
@@ -59,7 +80,7 @@ export class NewApplicationModal extends Modal {
 			.addText((text) => {
 				this.roleInputEl = text.inputEl;
 				text.inputEl.maxLength = 150;
-				text.setPlaceholder("e.g. Senior Software Engineer").onChange((value) => {
+				text.setValue(this.role).setPlaceholder("e.g. Senior Software Engineer").onChange((value) => {
 					this.role = value;
 				});
 			});
@@ -95,7 +116,7 @@ export class NewApplicationModal extends Modal {
 			.setDesc("e.g. New York, NY, Austin, TX")
 			.addText((text) => {
 				text.inputEl.maxLength = 150;
-				text.setPlaceholder("e.g. New York, NY").onChange((value) => {
+				text.setValue(this.location).setPlaceholder("e.g. New York, NY").onChange((value) => {
 					this.location = value;
 				});
 			});
@@ -109,6 +130,7 @@ export class NewApplicationModal extends Modal {
 				for (const option of EMPLOYMENT_OPTIONS) {
 					dropdown.addOption(option, option);
 				}
+				dropdown.setValue(this.employmentType);
 				dropdown.onChange((value) => {
 					this.employmentType = value as EmploymentType | "";
 				});
@@ -120,7 +142,7 @@ export class NewApplicationModal extends Modal {
 			.setDesc("e.g. $150k - $180k + equity")
 			.addText((text) => {
 				text.inputEl.maxLength = 100;
-				text.setPlaceholder("$150,000 - $180,000").onChange((value) => {
+				text.setValue(this.salary).setPlaceholder("$150,000 - $180,000").onChange((value) => {
 					this.salary = value;
 				});
 			});
@@ -131,7 +153,7 @@ export class NewApplicationModal extends Modal {
 			.setDesc("Link to active listing")
 			.addText((text) => {
 				text.inputEl.maxLength = 500;
-				text.setPlaceholder("https://company.com/careers/...").onChange((value) => {
+				text.setValue(this.jobUrl).setPlaceholder("https://company.com/careers/...").onChange((value) => {
 					this.jobUrl = value;
 				});
 			});
@@ -165,7 +187,7 @@ export class NewApplicationModal extends Modal {
 			.setDesc("Private impressions, how you found it, referral context")
 			.addTextArea((text) => {
 				text.inputEl.maxLength = 2000;
-				text.setPlaceholder("Notes...").onChange((value) => {
+				text.setValue(this.notes).setPlaceholder("Notes...").onChange((value) => {
 					this.notes = value;
 				});
 				text.inputEl.rows = 3;
@@ -193,14 +215,13 @@ export class NewApplicationModal extends Modal {
 			});
 
 		// Or paste plain text JD
-		let jobDescriptionText = "";
 		new Setting(contentEl)
 			.setName("Or Paste Job Description Text")
 			.setDesc("Markdown or plain text that will be embedded into the note")
 			.addTextArea((text) => {
 				text.inputEl.maxLength = 10000;
-				text.setPlaceholder("Paste job requirements and details here...").onChange((value) => {
-					jobDescriptionText = value;
+				text.setValue(this.jobDescription).setPlaceholder("Paste job requirements and details here...").onChange((value) => {
+					this.jobDescription = value;
 				});
 				text.inputEl.rows = 4;
 			});
@@ -216,7 +237,7 @@ export class NewApplicationModal extends Modal {
 					.onClick(async () => {
 						submitBtn.setDisabled(true);
 						try {
-							await this.handleSubmit(uploadedFile, existingVaultPath, jobDescriptionText);
+							await this.handleSubmit(uploadedFile, existingVaultPath);
 						} finally {
 							submitBtn.setDisabled(false);
 						}
@@ -231,8 +252,7 @@ export class NewApplicationModal extends Modal {
 
 	private async handleSubmit(
 		uploadedFile: File | null,
-		existingVaultPath: string,
-		jobDescriptionText: string
+		existingVaultPath: string
 	): Promise<void> {
 		if (!this.company.trim()) {
 			new Notice("Please enter a company name.");
@@ -287,7 +307,7 @@ export class NewApplicationModal extends Modal {
 				salary: this.salary.trim(),
 				jobUrl: this.jobUrl.trim(),
 				notes: this.notes.trim(),
-				jobDescription: jobDescriptionText.trim() || undefined,
+				jobDescription: this.jobDescription.trim() || undefined,
 				jobDescriptionFile: attachmentPath || undefined,
 				contacts: contacts,
 			});
