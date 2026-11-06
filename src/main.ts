@@ -100,11 +100,11 @@ export default class JobApplicationTrackerPlugin extends Plugin {
 			const prefill: NewApplicationPrefill = {
 				company: field("company", 100),
 				role: field("role", 150),
-				location: field("location", 150),
+				location: field("location", 500),
 				employmentType: EMPLOYMENT_OPTIONS.includes(employmentType as EmploymentType)
 					? (employmentType as EmploymentType)
 					: undefined,
-				salary: field("salary", 100),
+				salary: field("salary", 200),
 				jobUrl: field("jobUrl", 500),
 				notes: field("notes", 2000),
 				jobDescription: field("jobDescription", 10000),

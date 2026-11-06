@@ -1,7 +1,10 @@
 (() => {
 	const URI_ACTION = "swe-job-tracker-add";
 	const JD_MAX = 10000;
-	const DISMISSED_KEY = "swe-job-tracker-dismissed";
+	// Jobs whose card was already shown once. After that the card only appears from the toolbar popup.
+	const SEEN_KEY = "parsePromptSeen";
+	const SEEN_MAX = 2000;
+	const TRACKING_PARAM = /^(utm_\w+|gh_src|source|src|ref|referrer|refid|trk|trackingid|lipi|origin|share_id|iis|iisn)$/i;
 
 	const EMPLOYMENT_MAP = {
 		FULL_TIME: "Full-time",
@@ -91,32 +94,13 @@
 		});
 		const remote = [].concat(posting.jobLocationType ?? []).includes("TELECOMMUTE");
 		const unique = [...new Set(places.filter(Boolean))];
-		if (remote) unique.push("Remote");
+		if (remote) {
+			const regions = [].concat(posting.applicantLocationRequirements ?? [])
+				.map((r) => (typeof r === "string" ? r : r?.name))
+				.filter(Boolean);
+			unique.push(regions.length ? `Remote (${regions.join(", ")})` : "Remote");
+		}
 		return unique.join(" / ");
-	}
-
-	function formatSalary(posting) {
-		const base = posting.baseSalary;
-		if (!base) return "";
-		const value = typeof base.value === "object" ? base.value : { value: base.value };
-		const currency = base.currency || value.currency || "USD";
-		const fmt = (n) => {
-			const num = Number(n);
-			if (!Number.isFinite(num)) return String(n);
-			try {
-				return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(num);
-			} catch {
-				return num.toLocaleString("en-US");
-			}
-		};
-		const range =
-			value.minValue != null && value.maxValue != null && value.minValue !== value.maxValue
-				? `${fmt(value.minValue)} - ${fmt(value.maxValue)}`
-				: value.value != null || value.minValue != null || value.maxValue != null
-					? fmt(value.value ?? value.minValue ?? value.maxValue)
-					: "";
-		const unit = (value.unitText || base.unitText || "").toLowerCase();
-		return range && unit ? `${range} / ${unit}` : range;
 	}
 
 	function fromJobPosting(posting) {
@@ -126,9 +110,32 @@
 			role: posting.title ?? "",
 			location: formatLocation(posting),
 			employmentType: [].concat(posting.employmentType ?? []).map((t) => EMPLOYMENT_MAP[t]).find(Boolean) ?? "",
-			salary: formatSalary(posting),
+			salaryRanges: JobCompParser.rangesFromJsonLd(posting),
 			jobDescription: posting.description ? htmlToText(posting.description) : "",
 		};
+	}
+
+	// Pay often sits in its own block outside the description (Greenhouse/Ashby pay transparency, LinkedIn/Indeed chips).
+	const PAY_BLOCKS = '[class*="pay-range" i], [class*="pay-transparency" i], [class*="salary" i], [class*="compensation" i], [data-testid*="salary" i]';
+	// Other jobs' cards (search results, "similar jobs") also show salaries; ignore those.
+	const OTHER_JOBS = '[class*="job-card" i], [class*="jobs-search-results" i], [class*="scaffold-layout__list" i], [class*="similar" i], [class*="recommend" i], [class*="related" i]';
+
+	function pagePayText() {
+		const picked = [];
+		for (const el of document.querySelectorAll(PAY_BLOCKS)) {
+			if (el.closest(OTHER_JOBS) || picked.some((p) => p.contains(el))) continue;
+			picked.push(el);
+		}
+		return picked.map(elementToText).filter((t) => t && t.length < 4000).join("\n");
+	}
+
+	/** Fills salary with every listed range (lowest to highest per pay period) and adds every location mentioned. */
+	function addPayAndLocations(job, extraText) {
+		const text = [job.jobDescription, extraText, pagePayText()].filter(Boolean).join("\n\n");
+		const textRanges = JobCompParser.rangesFromText(text);
+		job.salary = JobCompParser.formatRanges([...(job.salaryRanges ?? []), ...textRanges]);
+		job.location = JobCompParser.mergeLocations([job.location, ...JobCompParser.locationsFromText(text, textRanges)]);
+		delete job.salaryRanges;
 	}
 
 	// ---------- Site-specific scrapers for pages without JSON-LD ----------
@@ -203,6 +210,9 @@
 		if (!job && (allowGeneric || KNOWN_JOB_URL.some((re) => re.test(location.href)))) job = fromGenericPage();
 		if (!job || !job.role) return null;
 		job.jobUrl = canonicalJobUrl();
+		// Generic pages have no description scraper, so read pay and locations from the main content.
+		const mainText = job.jobDescription ? "" : elementToText(document.querySelector("main, article, [role=main]") ?? document.body).slice(0, 40000);
+		addPayAndLocations(job, mainText);
 		if (job.jobDescription && job.jobDescription.length > JD_MAX) {
 			job.jobDescription = job.jobDescription.slice(0, JD_MAX - 1) + "…";
 		}
@@ -227,22 +237,34 @@
 		host = null;
 	}
 
-	function isDismissed(url) {
+	/** Keys that identify a job across tabs, reloads and URL variants (tracking params, same job on another site). */
+	function seenKeys(job) {
+		const keys = [];
 		try {
-			return JSON.parse(sessionStorage.getItem(DISMISSED_KEY) || "[]").includes(url);
-		} catch {
-			return false;
-		}
+			const url = new URL(job.jobUrl);
+			for (const name of [...url.searchParams.keys()]) {
+				if (TRACKING_PARAM.test(name)) url.searchParams.delete(name);
+			}
+			url.hash = "";
+			keys.push("url:" + url.toString().replace(/\/$/, ""));
+		} catch {}
+		const norm = (s) => String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+		if (job.company && job.role) keys.push(`job:${norm(job.company)}|${norm(job.role)}`);
+		return keys;
 	}
 
-	function markDismissed(url) {
+	/** Shows the card only the first time this job is detected, then remembers it. */
+	async function offerOnce(job) {
+		const keys = seenKeys(job);
+		const detectedOn = location.href;
 		try {
-			const list = JSON.parse(sessionStorage.getItem(DISMISSED_KEY) || "[]");
-			list.push(url);
-			sessionStorage.setItem(DISMISSED_KEY, JSON.stringify(list.slice(-50)));
+			const seen = (await chrome.storage.local.get(SEEN_KEY))[SEEN_KEY] ?? [];
+			if (keys.some((k) => seen.includes(k))) return;
+			await chrome.storage.local.set({ [SEEN_KEY]: [...seen.filter((k) => !keys.includes(k)), ...keys].slice(-SEEN_MAX) });
 		} catch {
-			// Storage blocked; the prompt will just reappear on reload.
+			return; // Extension reloaded since this page loaded, so its storage can't be reached.
 		}
+		if (location.href === detectedOn && !host) showPrompt(job);
 	}
 
 	function showPrompt(job) {
@@ -283,13 +305,8 @@
 		root.querySelector(".role").textContent = job.role;
 		root.querySelector(".company").textContent = [job.company, job.location].filter(Boolean).join(" · ");
 
-		const url = location.href;
-		const dismiss = () => {
-			markDismissed(url);
-			removePrompt();
-		};
-		root.querySelector(".close").addEventListener("click", dismiss);
-		root.querySelector(".secondary").addEventListener("click", dismiss);
+		root.querySelector(".close").addEventListener("click", removePrompt);
+		root.querySelector(".secondary").addEventListener("click", removePrompt);
 		root.querySelector(".primary").addEventListener("click", () => {
 			// Re-parse at click time: SPA pages may have finished loading the description since detection.
 			const fresh = parseJob({ allowGeneric: true }) ?? job;
@@ -298,7 +315,6 @@
 				// Extension was reloaded since this page loaded; the old content script can't reach it.
 				alert("SWE Job Tracker was updated. Reload this page and try again.");
 			});
-			markDismissed(url);
 			removePrompt();
 		});
 		document.documentElement.appendChild(host);
@@ -315,12 +331,12 @@
 			attempts = 0;
 			removePrompt();
 		}
-		if (host || attempts >= 10 || isDismissed(location.href)) return;
+		if (host || attempts >= 10) return;
 		attempts++;
 		const job = parseJob();
 		if (job) {
 			attempts = Infinity;
-			showPrompt(job);
+			offerOnce(job);
 		}
 	}
 

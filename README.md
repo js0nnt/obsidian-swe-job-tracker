@@ -45,6 +45,21 @@ For development, `npm run dev` watches and rebuilds `main.js`.
 3. Open a job posting. A card in the top-right asks **Parse this job into Obsidian?** Click **Parse**.
 4. The first time, Chrome asks to open Obsidian. Tick **Always allow** so it doesn't ask again.
 
-It fills company, role, location, employment type, salary, job URL, and the job description. Pages that include schema.org `JobPosting` data (Greenhouse, Lever, Ashby, Workday, and many company career sites) parse best. LinkedIn and Indeed use page scrapers, which can break when those sites change their markup.
+It fills company, role, location, employment type, salary, job URL, and the job description. Salary is read from the posting's structured data, the description, and any pay-transparency block on the page. Hourly, weekly, monthly and yearly pay are each shown as one lowest-to-highest range, for example `$55 - $62 / hour · $115,000 - $200,000 / year`, so per-location ranges collapse into a single span. Location lists every place the posting names, including the locations attached to per-location pay ranges. Pages that include schema.org `JobPosting` data (Greenhouse, Lever, Ashby, Workday, and many company career sites) parse best. LinkedIn and Indeed use page scrapers, which can break when those sites change their markup.
 
-If the card doesn't appear, click the extension's toolbar icon to parse the page anyway (it falls back to the page's heading). Obsidian opens the link in the vault you last used, so that vault needs the plugin enabled.
+The card appears only the first time you open a given job, even across tabs, reloads and URL variants. To parse it again later, or if the card doesn't appear, click the extension's toolbar icon and choose **Send this job to Obsidian** to parse the page anyway (it falls back to the page's heading). Obsidian opens the link in the vault you last used, so that vault needs the plugin enabled.
+
+### Autofill job applications
+
+The extension can also fill in application forms for you.
+
+1. Click the toolbar icon, then **Edit autofill profile**. Enter your details: contact info, address, links, education, work eligibility, optional EEO answers, your resume and cover letter files, and **custom answers** for questions the profile doesn't cover. If a question's label contains one of your phrases (for example `security clearance`), autofill uses that answer. Everything is stored locally in Chrome and saves as you type.
+2. On an application form, click the toolbar icon, then **Autofill this application**, or press **Alt+Shift+F**.
+3. A panel in the top-right lists:
+   - **Not filled · required**: required fields autofill couldn't answer, like open-ended questions or consent checkboxes.
+   - **Check these**: fields that were filled but deserve a look. That covers a dropdown where it picked the closest option, a site that rewrote or rejected a value, a field matched only by its hidden name, a number field that dropped part of your answer, or an attached file.
+   - **Not filled · optional** and **Filled**, collapsed.
+
+   Problem fields are outlined on the page (red for not filled, amber for check). Click an item to scroll to it. **Run again** helps with multi-step forms like Workday.
+
+Autofill never submits anything. It skips fields that already have a value. It handles regular inputs, selects, radio buttons, checkboxes, file uploads, and custom dropdowns (react-select on Greenhouse, Workday's list buttons), including forms embedded in iframes.
