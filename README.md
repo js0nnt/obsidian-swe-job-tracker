@@ -62,4 +62,4 @@ The extension can also fill in application forms for you.
 
    Problem fields are outlined on the page (red for not filled, amber for check). Click an item to scroll to it. **Run again** helps with multi-step forms like Workday.
 
-Autofill never submits anything. It skips fields that already have a value. It handles regular inputs, selects, radio buttons, checkboxes, file uploads, and custom dropdowns (react-select on Greenhouse, Workday's list buttons), including forms embedded in iframes.
+Autofill never submits anything.
