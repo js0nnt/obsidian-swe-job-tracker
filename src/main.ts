@@ -13,12 +13,14 @@ import { EditApplicationModal } from "./modals/EditApplicationModal";
 import { ManageApplicationModal } from "./modals/ManageApplicationModal";
 import { ConfirmDeleteModal } from "./modals/ConfirmDeleteModal";
 import { JobTrackerView } from "./views/JobTrackerView";
+import { ExtensionBridge } from "./extensionBridge";
 
 export default class JobApplicationTrackerPlugin extends Plugin {
 	settings: JobApplicationTrackerSettings = Object.assign({}, DEFAULT_SETTINGS);
 	appService!: ApplicationService;
 	private ghostCheckRunning = false;
 	private unloaded = false;
+	private extensionBridge: ExtensionBridge | null = null;
 
 	async checkForGhostedApplications(): Promise<void> {
 		if (this.unloaded || this.ghostCheckRunning || !this.settings.autoGhostEnabled) return;
@@ -39,6 +41,8 @@ export default class JobApplicationTrackerPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.appService = new ApplicationService(this.app, this);
+		this.extensionBridge = new ExtensionBridge(() => this.appService.getAllApplications());
+		this.updateExtensionBridge();
 		this.app.workspace.onLayoutReady(() => {
 			if (this.unloaded) return;
 			void this.checkForGhostedApplications();
@@ -331,12 +335,22 @@ export default class JobApplicationTrackerPlugin extends Plugin {
 		return leaves.some((leaf) => leaf.getRoot() === this.app.workspace.rootSplit);
 	}
 
-	onunload() { this.unloaded = true; }
+	/** Lets the browser extension check whether a job is already tracked, so it stops offering to parse it. */
+	updateExtensionBridge(): void {
+		if (this.settings.extensionBridgeEnabled && !this.unloaded) this.extensionBridge?.start();
+		else this.extensionBridge?.stop();
+	}
+
+	onunload() {
+		this.unloaded = true;
+		this.extensionBridge?.stop();
+	}
 
 	async loadSettings() {
 		const data = (await this.loadData()) as Partial<JobApplicationTrackerSettings> | null;
 		this.settings = {
 			autoGhostEnabled: typeof data?.autoGhostEnabled === "boolean" ? data.autoGhostEnabled : true,
+			extensionBridgeEnabled: typeof data?.extensionBridgeEnabled === "boolean" ? data.extensionBridgeEnabled : true,
 			trackerFolderPath: data?.trackerFolderPath ?? DEFAULT_SETTINGS.trackerFolderPath,
 			interviewNotesFolderPath: data?.interviewNotesFolderPath ?? DEFAULT_SETTINGS.interviewNotesFolderPath,
 			attachmentsFolderPath: data?.attachmentsFolderPath ?? DEFAULT_SETTINGS.attachmentsFolderPath,

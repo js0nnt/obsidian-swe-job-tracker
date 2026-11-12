@@ -1,4 +1,34 @@
 const PROFILE_KEY = "autofillProfile";
+// The Obsidian plugin answers "is this job tracked?" here. Keep in sync with EXTENSION_BRIDGE_PORT in src/extensionBridge.ts.
+const VAULT_PORT = 27125;
+
+async function fetchJson(url, timeoutMs) {
+	const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), cache: "no-store" });
+	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+	return res.json();
+}
+
+/** Returns { tracked, company, role, status } from Obsidian, or { reachable: false } when Obsidian isn't running. */
+async function vaultLookup(job) {
+	const params = new URLSearchParams();
+	for (const key of ["url", "company", "role"]) if (job?.[key]) params.set(key, String(job[key]));
+	try {
+		return { reachable: true, ...(await fetchJson(`http://127.0.0.1:${VAULT_PORT}/lookup?${params}`, 1500)) };
+	} catch {
+		return { reachable: false };
+	}
+}
+
+/** Greenhouse's public job API has the company name, location, pay and description that its pages don't mark up. */
+async function greenhouseJob({ board, id, eu }) {
+	if (!/^[\w-]+$/.test(board ?? "") || !/^\d+$/.test(id ?? "")) return null;
+	const host = eu ? "boards-api.eu.greenhouse.io" : "boards-api.greenhouse.io";
+	try {
+		return await fetchJson(`https://${host}/v1/boards/${board}/jobs/${id}?pay_transparency=true`, 5000);
+	} catch {
+		return null;
+	}
+}
 
 function openOptions(setup = false) {
 	chrome.tabs.create({ url: chrome.runtime.getURL("options.html" + (setup ? "?setup=1" : "")) });
@@ -58,6 +88,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 		case "autofill-clear":
 			if (tabId !== undefined) chrome.tabs.sendMessage(tabId, { type: "autofill-clear" }).catch(() => {});
 			return;
+		case "vault-lookup":
+			vaultLookup(msg.job).then(sendResponse);
+			return true;
+		case "greenhouse-job":
+			greenhouseJob(msg).then(sendResponse);
+			return true;
 		case "open-options":
 			openOptions();
 			return;

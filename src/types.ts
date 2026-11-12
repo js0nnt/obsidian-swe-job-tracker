@@ -90,6 +90,7 @@ export interface JobApplication {
 
 export interface JobApplicationTrackerSettings {
 	autoGhostEnabled: boolean;
+	extensionBridgeEnabled: boolean;
 	sankey: import("./sankeySettings").SankeySettings;
 	trackerFolderPath: string;
 	interviewNotesFolderPath: string;

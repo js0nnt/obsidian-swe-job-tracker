@@ -134,6 +134,7 @@ date: "{{date}}"
 
 export const DEFAULT_SETTINGS: JobApplicationTrackerSettings = {
 	autoGhostEnabled: true,
+	extensionBridgeEnabled: true,
 	sankey: { ...DEFAULT_SANKEY_SETTINGS },
 	trackerFolderPath: "Job Applications",
 	interviewNotesFolderPath: "Job Applications/Interviews",

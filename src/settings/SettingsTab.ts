@@ -56,6 +56,21 @@ export class JobApplicationTrackerSettingTab extends PluginSettingTab {
 		return [
 			{
 				type: "group",
+				heading: "Browser extension",
+				items: [{
+					name: "Let the extension check this vault",
+					desc: "The Chrome extension asks Obsidian (on this computer only) whether a job is already tracked, so it won't offer to parse jobs you've already added. Desktop only.",
+					render: (setting: Setting) => {
+						setting.addToggle(toggle => toggle.setValue(this.plugin.settings.extensionBridgeEnabled).onChange(async enabled => {
+							this.plugin.settings.extensionBridgeEnabled = enabled;
+							await this.plugin.saveSettings(false);
+							this.plugin.updateExtensionBridge();
+						}));
+					},
+				}],
+			},
+			{
+				type: "group",
 				heading: "Automatic ghosting",
 				items: [{
 					name: "Mark unanswered applications as Ghosted",

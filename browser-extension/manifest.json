@@ -1,9 +1,14 @@
 {
 	"manifest_version": 3,
 	"name": "SWE Job Tracker Clipper",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Detects job postings and pre-fills the SWE Job Tracker \"Add application\" form in Obsidian, and autofills job applications.",
 	"permissions": ["storage"],
+	"host_permissions": [
+		"http://127.0.0.1/*",
+		"https://boards-api.greenhouse.io/*",
+		"https://boards-api.eu.greenhouse.io/*"
+	],
 	"action": {
 		"default_title": "SWE Job Tracker",
 		"default_popup": "popup.html"
